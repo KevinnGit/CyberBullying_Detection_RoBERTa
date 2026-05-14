@@ -1,0 +1,7 @@
+{
+  "best_threshold": 0.45000000000000007,
+  "best_macro_f1": 0.9138949052117025,
+  "accuracy": 91.54201034530966,
+  "auc": 0.9782455046684954,
+  "model": "RoBERTa + Feature Engineering + Focal Loss"
+}
