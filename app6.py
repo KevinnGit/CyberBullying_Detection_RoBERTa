@@ -7,8 +7,6 @@ import torch.nn as nn
 import pickle
 import json
 import re
-import pytesseract
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
 
 from transformers import RobertaTokenizer, RobertaModel
 from textblob import TextBlob
@@ -63,9 +61,7 @@ class FastClassifier(nn.Module):
         )
 
     def forward(self, embedding, features):
-
         x = torch.cat([embedding, features], dim=1)
-
         return self.classifier(x).squeeze(1)
 
 # ──────────────────────────────────────────────────────────
@@ -74,25 +70,12 @@ class FastClassifier(nn.Module):
 @st.cache_resource
 def load_models():
 
-    tokenizer = RobertaTokenizer.from_pretrained(
-        'roberta-base'
-    )
-
-    roberta = RobertaModel.from_pretrained(
-        'roberta-base'
-    ).to(device)
-
+    tokenizer = RobertaTokenizer.from_pretrained('roberta-base')
+    roberta   = RobertaModel.from_pretrained('roberta-base').to(device)
     roberta.eval()
 
     model = FastClassifier().to(device)
-
-    model.load_state_dict(
-        torch.load(
-            'best_model.pt',
-            map_location=device
-        )
-    )
-
+    model.load_state_dict(torch.load('best_model.pt', map_location=device))
     model.eval()
 
     with open('scaler.pkl', 'rb') as f:
@@ -123,7 +106,6 @@ FRIENDLY_WORDS = {
 }
 
 SARCASM_PATTERNS = [
-
     r'yeah right',
     r'as if',
     r'good for you.*(🙄|😒|💀)',
@@ -134,70 +116,29 @@ SARCASM_PATTERNS = [
 def detect_tone(text):
 
     text_lower = text.lower()
+    words      = set(text_lower.split())
 
-    words = set(text_lower.split())
+    has_mock_emoji    = any(e in text for e in MOCK_EMOJIS)
+    has_banter_emoji  = any(e in text for e in BANTER_EMOJIS)
+    has_friendly_word = bool(words & FRIENDLY_WORDS)
 
-    has_mock_emoji = any(
-        e in text for e in MOCK_EMOJIS
-    )
-
-    has_banter_emoji = any(
-        e in text for e in BANTER_EMOJIS
-    )
-
-    has_friendly_word = bool(
-        words & FRIENDLY_WORDS
-    )
-
-    # sarcasm
     for pattern in SARCASM_PATTERNS:
-
         if re.search(pattern, text_lower):
+            return 'sarcastic', 'sarcasm pattern detected'
 
-            return (
-                'sarcastic',
-                'sarcasm pattern detected'
-            )
-
-    # mocking
     if has_mock_emoji:
+        return 'mocking', 'mocking emoji detected'
 
-        return (
-            'mocking',
-            'mocking emoji detected'
-        )
-
-    # friendly
-    if (
-        (has_banter_emoji or has_friendly_word)
-        and
-        not has_mock_emoji
-    ):
-
-        return (
-            'friendly',
-            'friendly/banter indicators detected'
-        )
+    if (has_banter_emoji or has_friendly_word) and not has_mock_emoji:
+        return 'friendly', 'friendly/banter indicators detected'
 
     positive_patterns = [
-
-        'without you',
-        'love you',
-        'miss you',
-        'need you',
-        'we love you',
-        'you matter',
-        'group would be boring without you'
+        'without you', 'love you', 'miss you', 'need you',
+        'we love you', 'you matter', 'group would be boring without you'
     ]
-
     for p in positive_patterns:
-
         if p in text_lower:
-
-            return (
-                'friendly',
-                'positive relationship phrase detected'
-            )
+            return 'friendly', 'positive relationship phrase detected'
 
     return 'neutral', ''
 
@@ -205,7 +146,6 @@ def detect_tone(text):
 # INDIRECT INSULTS
 # ──────────────────────────────────────────────────────────
 INDIRECT_PATTERNS = [
-
     r'nobody likes you',
     r'no one asked',
     r'stay mad',
@@ -217,15 +157,10 @@ INDIRECT_PATTERNS = [
 ]
 
 def has_indirect_insult(text):
-
     text_lower = text.lower()
-
     for pattern in INDIRECT_PATTERNS:
-
         if re.search(pattern, text_lower):
-
             return True, pattern
-
     return False, None
 
 # ──────────────────────────────────────────────────────────
@@ -236,144 +171,74 @@ def friendly_mitigation(text, tone, context):
     text_lower = text.lower()
 
     positive_patterns = [
-
-        r'without you',
-        r'love you',
-        r'ily',
-        r'bestie',
-        r'bff',
-        r'jk',
-        r'kidding',
-        r'joking',
-        r'miss you',
-        r'we love you',
-        r'you matter',
+        r'without you', r'love you', r'ily', r'bestie', r'bff',
+        r'jk', r'kidding', r'joking', r'miss you', r'we love you', r'you matter',
     ]
 
     mitigation = 0.0
 
-    # friendly tone
     if tone == 'friendly':
-
         mitigation -= 0.15
 
-    # positive phrases
     for pattern in positive_patterns:
-
         if re.search(pattern, text_lower):
-
             mitigation -= 0.08
 
-    # friend context — only apply if tone is NOT neutral
-    # this prevents mitigation from cancelling context boost
-    # when there are no friendly signals in the text
-    if (
-        context == 'Between friends (may contain banter)'
-        and tone != 'neutral'
-    ):
+    if context == 'Between friends (may contain banter)' and tone != 'neutral':
         mitigation -= 0.10
 
-    # limit mitigation
     mitigation = max(mitigation, -0.30)
-
     return mitigation
 
 # ──────────────────────────────────────────────────────────
 # OCR
 # ──────────────────────────────────────────────────────────
 def extract_text_from_image(image):
-
     if image.mode != 'RGB':
         image = image.convert('RGB')
-
-    text = pytesseract.image_to_string(
-        image,
-        lang='eng'
-    )
-
+    text = pytesseract.image_to_string(image, lang='eng')
     text = re.sub(r'\n+', ' ', text)
     text = re.sub(r'\s+', ' ', text)
-
     return text.strip()
+
 # ──────────────────────────────────────────────────────────
 # FEATURE ENGINEERING
 # ──────────────────────────────────────────────────────────
 def extract_features(text):
-
     blob = TextBlob(text)
-
     return [
-
         blob.sentiment.polarity,
-
-        sum(
-            1 for w in text.split()
-            if profanity.contains_profanity(w)
-        ),
-
+        sum(1 for w in text.split() if profanity.contains_profanity(w)),
         len(text.split()),
-
-        sum(
-            1 for c in text
-            if c.isupper()
-        ) / max(len(text), 1),
-
+        sum(1 for c in text if c.isupper()) / max(len(text), 1),
         text.count('!'),
-
         text.count('?')
     ]
 
 # ──────────────────────────────────────────────────────────
 # PREDICT
 # ──────────────────────────────────────────────────────────
-def predict(
-    text,
-    tokenizer,
-    roberta,
-    model,
-    scaler,
-    context='Unknown / Public comment'
-):
+def predict(text, tokenizer, roberta, model, scaler,
+            context='Unknown / Public comment'):
 
     normalized = normalize_text(text)
-
-    # tone
     tone, tone_reason = detect_tone(text)
 
-    # indirect insults
-    is_indirect, matched_pattern = has_indirect_insult(
-        normalized
-    )
+    is_indirect, matched_pattern = has_indirect_insult(normalized)
+    indirect_boost = 0.15 if is_indirect else 0.0
 
-    indirect_boost = 0.0
-
-    if is_indirect:
-        indirect_boost = 0.15
-
-    # context boost
     context_boost = 0.0
-
     if context == 'Between strangers':
         context_boost = 0.10
-
     elif context == 'Between friends (may contain banter)':
         context_boost = -0.25
-
     elif context == 'Directed at me personally':
         context_boost = 0.20
-
     elif context == 'Repeated messages from same person':
         context_boost = 0.25
 
-    # mitigation — only applies when there are actual
-    # friendly signals, NOT based on context alone
-    mitigation = friendly_mitigation(
-        text,
-        tone,
-        context
-    )
+    mitigation = friendly_mitigation(text, tone, context)
 
-    # tokenize
     enc = tokenizer(
         normalized,
         max_length=96,
@@ -383,39 +248,22 @@ def predict(
     )
 
     with torch.no_grad():
-
         emb = roberta(
             enc['input_ids'].to(device),
             enc['attention_mask'].to(device)
         ).last_hidden_state[:, 0, :]
 
         feat = torch.tensor(
-            scaler.transform([
-                extract_features(normalized)
-            ]),
+            scaler.transform([extract_features(normalized)]),
             dtype=torch.float32
         ).to(device)
 
         prob = model(emb, feat).item()
 
-    # final score
-    boosted_prob = (
-        prob
-        + indirect_boost
-        + context_boost
-        + mitigation
-    )
+    boosted_prob = prob + indirect_boost + context_boost + mitigation
+    boosted_prob = max(0.0, min(1.0, boosted_prob))
+    is_cyber     = boosted_prob >= THRESHOLD
 
-    # clamp
-    boosted_prob = max(
-        0.0,
-        min(1.0, boosted_prob)
-    )
-
-    # final decision
-    is_cyber = boosted_prob >= THRESHOLD
-
-    # debug
     print("===================================")
     print("RAW:", prob)
     print("INDIRECT:", indirect_boost)
@@ -427,18 +275,10 @@ def predict(
     print("===================================")
 
     return (
-
-        boosted_prob,
-        is_cyber,
-        tone,
-        tone_reason,
-        is_indirect,
-        matched_pattern,
-        prob,
-        context_boost,
-        mitigation
+        boosted_prob, is_cyber, tone, tone_reason,
+        is_indirect, matched_pattern, prob,
+        context_boost, mitigation
     )
-
 
 # ──────────────────────────────────────────────────────────
 # WORD-LEVEL DICTIONARIES
@@ -479,13 +319,12 @@ WORD_CATEGORIES = {
 
 
 def analyse_words(text):
-    """Return (html_highlighted, flagged_list, category_counts)."""
     import re as _re
-    words       = text.split()
-    text_lower  = text.lower()
-    flagged     = []
-    cat_counts  = {k: 0 for k in WORD_CATEGORIES}
-    word_flags  = {}   # index -> (category, reason)
+    words      = text.split()
+    text_lower = text.lower()
+    flagged    = []
+    cat_counts = {k: 0 for k in WORD_CATEGORIES}
+    word_flags = {}
 
     for i, word in enumerate(words):
         clean = _re.sub(r'[^a-z]', '', word.lower())
@@ -521,7 +360,6 @@ def analyse_words(text):
                             'reason': 'all-caps aggressive tone marker'})
             cat_counts['caps'] += 1
 
-    # phrase-level: indirect insult patterns
     char_cat = [''] * len(text)
     for pattern in INDIRECT_PATTERNS:
         for m in _re.finditer(pattern, text_lower):
@@ -532,7 +370,6 @@ def analyse_words(text):
                             'reason': f'indirect insult pattern: `{pattern}`'})
             cat_counts['indirect'] += 1
 
-    # Build highlighted HTML
     parts = []
     pos   = 0
     for i, word in enumerate(words):
@@ -563,7 +400,6 @@ def analyse_words(text):
         parts.append(text[pos:])
 
     return ''.join(parts), flagged, cat_counts
-
 
 # ──────────────────────────────────────────────────────────
 # SUGGESTIONS
@@ -599,7 +435,6 @@ def _signal_row(icon, label, detail, color='#f39c12'):
         unsafe_allow_html=True
     )
 
-
 # ──────────────────────────────────────────────────────────
 # SHOW RESULT
 # ──────────────────────────────────────────────────────────
@@ -620,7 +455,6 @@ def show_result(text, tokenizer, roberta, model, scaler,
         html_highlighted, flagged_words, cat_counts = analyse_words(text)
 
     # ── live features ──────────────────────────────────────
-    from textblob import TextBlob
     blob         = TextBlob(text)
     sentiment    = blob.sentiment.polarity
     subjectivity = blob.sentiment.subjectivity
@@ -630,8 +464,8 @@ def show_result(text, tokenizer, roberta, model, scaler,
     excl_count   = text.count('!')
     ques_count   = text.count('?')
     profane_cnt  = sum(1 for w in text.split() if profanity.contains_profanity(w))
-    hashtag_cnt  = len(__import__('re').findall(r'#\w+', text))
-    mention_cnt  = len(__import__('re').findall(r'@\w+', text))
+    hashtag_cnt  = len(re.findall(r'#\w+', text))
+    mention_cnt  = len(re.findall(r'@\w+', text))
     lexical_div  = len(set(text.lower().split())) / max(word_count, 1)
     margin       = boosted_prob - THRESHOLD
 
@@ -652,10 +486,10 @@ def show_result(text, tokenizer, roberta, model, scaler,
     st.progress(float(boosted_prob))
 
     k1, k2, k3, k4 = st.columns(4)
-    k1.metric('Final Score',  f'{boosted_prob*100:.2f}%')
-    k2.metric('Raw RoBERTa',  f'{raw_prob*100:.2f}%')
-    k3.metric('Threshold',    f'{THRESHOLD*100:.0f}%')
-    k4.metric('Margin',       f'{abs(margin)*100:.2f}%',
+    k1.metric('Final Score', f'{boosted_prob*100:.2f}%')
+    k2.metric('Raw RoBERTa', f'{raw_prob*100:.2f}%')
+    k3.metric('Threshold',   f'{THRESHOLD*100:.0f}%')
+    k4.metric('Margin',      f'{abs(margin)*100:.2f}%',
               delta='above' if margin >= 0 else 'below',
               delta_color='inverse')
 
@@ -666,13 +500,13 @@ def show_result(text, tokenizer, roberta, model, scaler,
     # TABS
     # ══════════════════════════════════════════════════════
     tab_words, tab_score, tab_text, tab_signals, tab_why, tab_explain = st.tabs([
-    '🔦 Word Analysis',
-    '📊 Score Breakdown',
-    '📝 Text Statistics',
-    '🔎 Detected Signals',
-    '💡 Why This Score?',
-    '📖 Detailed Explanation',   # ← new
-])
+        '🔦 Word Analysis',
+        '📊 Score Breakdown',
+        '📝 Text Statistics',
+        '🔎 Detected Signals',
+        '💡 Why This Score?',
+        '📖 Detailed Explanation',
+    ])
 
     # ──────────────────────────────────────────────────────
     # TAB: WORD ANALYSIS
@@ -680,7 +514,6 @@ def show_result(text, tokenizer, roberta, model, scaler,
     with tab_words:
         st.markdown('#### Which words triggered the score')
 
-        # legend — only show categories that actually fired
         legend_parts = []
         for cat, (fg, bg, label) in WORD_CATEGORIES.items():
             if cat_counts.get(cat, 0) > 0:
@@ -697,7 +530,6 @@ def show_result(text, tokenizer, roberta, model, scaler,
                 unsafe_allow_html=True
             )
 
-        # highlighted text
         st.markdown(
             '<div style="background:#0d1b2a;border:1px solid #2a3a4a;'
             'border-radius:10px;padding:16px 20px;font-size:16px;'
@@ -711,7 +543,6 @@ def show_result(text, tokenizer, roberta, model, scaler,
         if flagged_words:
             st.markdown(f'**{len(flagged_words)} flagged word(s) / phrase(s):**')
 
-            # table
             rows = ''
             for item in flagged_words:
                 fg2, bg2, lbl2 = WORD_CATEGORIES.get(
@@ -737,7 +568,6 @@ def show_result(text, tokenizer, roberta, model, scaler,
                 unsafe_allow_html=True
             )
 
-            # bar chart
             st.markdown('')
             st.markdown('**Category breakdown:**')
             total_f = max(sum(cat_counts.values()), 1)
@@ -781,9 +611,7 @@ def show_result(text, tokenizer, roberta, model, scaler,
              '😊 Friendly signals softened the score'),
         ]
 
-        total = 0.0
         for name, val, note in components:
-            total += val
             sign  = '+' if val >= 0 else ''
             color = '#e74c3c' if val > 0.001 else ('#2ecc71' if val < -0.001 else '#8899aa')
             st.markdown(
@@ -866,13 +694,13 @@ def show_result(text, tokenizer, roberta, model, scaler,
         st.markdown('#### Every signal checked — fired or not')
 
         tone_map = {
-            'sarcastic': ('😏', 'Sarcastic tone',   '#f39c12',
+            'sarcastic': ('😏', 'Sarcastic tone',  '#f39c12',
                           'Sarcasm can mask bullying — no mitigation applied'),
-            'mocking':   ('😬', 'Mocking tone',      '#e74c3c',
+            'mocking':   ('😬', 'Mocking tone',     '#e74c3c',
                           'Mocking emoji detected — belittling language'),
-            'friendly':  ('😊', 'Friendly/banter',   '#2ecc71',
+            'friendly':  ('😊', 'Friendly/banter',  '#2ecc71',
                           'Friendly indicators — mitigation applied'),
-            'neutral':   ('😐', 'Neutral tone',      '#8899aa', 'No strong tone signal'),
+            'neutral':   ('😐', 'Neutral tone',     '#8899aa', 'No strong tone signal'),
         }
         t_icon, t_label, t_color, t_detail = tone_map.get(
             tone, ('❓', tone, '#8899aa', ''))
@@ -919,13 +747,13 @@ def show_result(text, tokenizer, roberta, model, scaler,
 
         with st.expander('🔬 All sarcasm patterns checked'):
             for p in SARCASM_PATTERNS:
-                matched = bool(__import__('re').search(p, text.lower()))
+                matched = bool(re.search(p, text.lower()))
                 st.markdown(f"{'🔴' if matched else '⚪'} `{p}` — "
                             f"{'**MATCHED**' if matched else 'not matched'}")
 
         with st.expander('🔬 All indirect-insult patterns checked'):
             for p in INDIRECT_PATTERNS:
-                matched = bool(__import__('re').search(p, text.lower()))
+                matched = bool(re.search(p, text.lower()))
                 st.markdown(f"{'🔴' if matched else '⚪'} `{p}` — "
                             f"{'**MATCHED**' if matched else 'not matched'}")
 
@@ -952,7 +780,7 @@ def show_result(text, tokenizer, roberta, model, scaler,
                 f'**{profane_cnt} profane word(s)** were detected — a direct indicator '
                 f'of hostile language.')
 
-        if len(flagged_words) > 0:
+        if flagged_words:
             threat_f = [w for w in flagged_words if w['category'] == 'threat']
             hate_f   = [w for w in flagged_words if w['category'] == 'hate']
             if threat_f:
@@ -1036,344 +864,346 @@ def show_result(text, tokenizer, roberta, model, scaler,
                 f'**Conclusion:** Score of {boosted_prob*100:.2f}% is well below the '
                 f'{THRESHOLD*100:.0f}% threshold. No strong cyberbullying indicators.')
 
-    st.divider()
+    # ──────────────────────────────────────────────────────
+    # TAB: DETAILED EXPLANATION  ← FIX: everything is indented inside with block
+    # ──────────────────────────────────────────────────────
+    with tab_explain:
+        st.markdown('#### 📖 Detailed Explanation')
+        st.caption('A full narrative breakdown combining all metrics and signals.')
 
-    # suggestions always at bottom
+        # ── OVERALL VERDICT ────────────────────────────────
+        st.markdown('---')
+        st.markdown('### 🏁 Overall Verdict')
+
+        if boosted_prob >= 0.75:
+            st.error(
+                f'This message scores **{boosted_prob*100:.2f}%**, which is well above '
+                f'the **{THRESHOLD*100:.0f}% threshold**. This is considered **high-risk '
+                f'cyberbullying**. The combination of language patterns, tone, and context '
+                f'strongly suggests harmful intent toward the target.'
+            )
+        elif boosted_prob >= THRESHOLD:
+            st.warning(
+                f'This message scores **{boosted_prob*100:.2f}%**, crossing the '
+                f'**{THRESHOLD*100:.0f}% threshold**. This is flagged as **potential '
+                f'cyberbullying**. While not conclusive, the signals present are concerning '
+                f'enough to warrant attention and monitoring.'
+            )
+        elif boosted_prob >= 0.35:
+            st.info(
+                f'This message scores **{boosted_prob*100:.2f}%**, below the threshold but '
+                f'in an ambiguous range. It may be **banter or mixed-tone communication**. '
+                f'Context plays a big role here — the same words between friends may be '
+                f'harmless but between strangers could signal hostility.'
+            )
+        else:
+            st.success(
+                f'This message scores **{boosted_prob*100:.2f}%**, well below the '
+                f'**{THRESHOLD*100:.0f}% threshold**. The content does **not appear to be '
+                f'cyberbullying**. The language, tone, and context all suggest this is '
+                f'normal communication.'
+            )
+
+        # ── MODEL ANALYSIS ─────────────────────────────────
+        st.markdown('---')
+        st.markdown('### 🤖 What the AI Model Detected')
+
+        if raw_prob >= 0.75:
+            model_explanation = (
+                f'The RoBERTa model — trained on thousands of real cyberbullying examples — '
+                f'gave this text a raw score of **{raw_prob*100:.2f}%**. This is a very high '
+                f'base score, meaning the sentence structure, word choices, and phrasing '
+                f'closely resemble confirmed bullying content in its training data.'
+            )
+        elif raw_prob >= 0.5:
+            model_explanation = (
+                f'The RoBERTa model gave a raw score of **{raw_prob*100:.2f}%**, meaning it '
+                f'found moderate-to-strong signals of bullying language. The model detected '
+                f'patterns in the text — such as phrasing, tone, or word combinations — '
+                f'that are statistically associated with cyberbullying.'
+            )
+        elif raw_prob >= 0.35:
+            model_explanation = (
+                f'The RoBERTa model gave a raw score of **{raw_prob*100:.2f}%**. The model '
+                f'found some patterns associated with bullying but they are not strong enough '
+                f'to be conclusive on their own. The text sits in an ambiguous zone.'
+            )
+        else:
+            model_explanation = (
+                f'The RoBERTa model gave a low raw score of **{raw_prob*100:.2f}%**, meaning '
+                f'it found very few or no patterns associated with cyberbullying. The language '
+                f'structure does not resemble bullying content.'
+            )
+        st.markdown(model_explanation)
+
+        # ── TONE ANALYSIS ──────────────────────────────────
+        st.markdown('---')
+        st.markdown('### 🎭 Tone Analysis')
+
+        if tone == 'friendly':
+            st.markdown(
+                f'The tone was detected as **friendly/banter** ({tone_reason}). '
+                f'This is a mitigating factor — the presence of friendly language markers '
+                f'such as casual expressions, banter emojis, or affectionate terms suggests '
+                f'the message may not carry genuine harmful intent. '
+                f'The score was reduced by **{abs(mitigation)*100:.0f}%** as a result.'
+            )
+        elif tone == 'mocking':
+            st.markdown(
+                f'The tone was detected as **mocking** ({tone_reason}). '
+                f'Mocking language — even when disguised as humour — is a known vector '
+                f'for cyberbullying. It can belittle, embarrass, or demean the target '
+                f'while giving the sender plausible deniability. No mitigation was applied.'
+            )
+        elif tone == 'sarcastic':
+            st.markdown(
+                f'The tone was detected as **sarcastic** ({tone_reason}). '
+                f'Sarcasm is commonly used to mask bullying intent — a genuinely harmful '
+                f'message can be framed as a joke. Because of this, sarcasm does **not** '
+                f'trigger friendly mitigation. The score was not reduced.'
+            )
+        else:
+            st.markdown(
+                'The tone was detected as **neutral** — no strong friendly or hostile '
+                'tone markers were found. The score is therefore driven primarily by the '
+                'language content itself rather than emotional delivery.'
+            )
+
+        # ── LANGUAGE & VOCABULARY ──────────────────────────
+        st.markdown('---')
+        st.markdown('### 📝 Language & Vocabulary Breakdown')
+
+        if profane_cnt > 0:
+            st.markdown(
+                f'**Profanity:** {profane_cnt} profane word(s) were detected. Profanity '
+                f'is a direct signal of hostile language and is fed as a feature directly '
+                f'into the classifier. The more profane words present, the higher the '
+                f'bullying likelihood.'
+            )
+        else:
+            st.markdown(
+                '**Profanity:** No profane words were detected. This is a positive signal '
+                'that the language is not overtly hostile.'
+            )
+
+        threat_words_found = [w for w in flagged_words if w['category'] == 'threat']
+        hate_words_found   = [w for w in flagged_words if w['category'] == 'hate']
+        excl_words_found   = [w for w in flagged_words if w['category'] == 'exclusion']
+
+        if threat_words_found:
+            st.markdown(
+                f'**Threat/Violence vocabulary:** The word(s) '
+                f'**{", ".join(w["word"] for w in threat_words_found)}** were detected. '
+                f'These words explicitly reference physical harm or threats and are among '
+                f'the strongest indicators of cyberbullying or harassment.'
+            )
+
+        if hate_words_found:
+            st.markdown(
+                f'**Hate/Dehumanising vocabulary:** The word(s) '
+                f'**{", ".join(w["word"] for w in hate_words_found)}** were detected. '
+                f'This type of language is used to degrade, demean, or dehumanise the '
+                f'target — a hallmark of sustained bullying behaviour.'
+            )
+
+        if excl_words_found:
+            st.markdown(
+                f'**Exclusion/Social attack vocabulary:** The word(s) '
+                f'**{", ".join(w["word"] for w in excl_words_found)}** were detected. '
+                f'Social exclusion language targets a person\'s sense of belonging and '
+                f'self-worth, and is a subtle but damaging form of cyberbullying.'
+            )
+
+        if not threat_words_found and not hate_words_found and not excl_words_found and profane_cnt == 0:
+            st.markdown(
+                '**Vocabulary:** No explicitly harmful words were found in the known '
+                'dictionaries. The score is driven by the overall sentence-level patterns '
+                'learned by RoBERTa, not individual words.'
+            )
+
+        # ── SENTIMENT ──────────────────────────────────────
+        st.markdown('---')
+        st.markdown('### 😡 Sentiment & Emotional Tone')
+
+        if sentiment < -0.5:
+            st.markdown(
+                f'**Sentiment polarity: {sentiment:+.3f}** — This is a **very strongly '
+                f'negative** sentiment score. The text reads as highly hostile, angry, or '
+                f'attacking. Strong negative sentiment combined with other signals is a '
+                f'reliable indicator of harmful intent.'
+            )
+        elif sentiment < -0.2:
+            st.markdown(
+                f'**Sentiment polarity: {sentiment:+.3f}** — This is a **moderately '
+                f'negative** sentiment. The text leans hostile but stops short of being '
+                f'extremely aggressive on sentiment alone.'
+            )
+        elif sentiment > 0.2:
+            st.markdown(
+                f'**Sentiment polarity: {sentiment:+.3f}** — This is a **positive** '
+                f'sentiment score. Positive sentiment generally works against a bullying '
+                f'classification, though it can occasionally mask sarcasm or backhanded '
+                f'comments.'
+            )
+        else:
+            st.markdown(
+                f'**Sentiment polarity: {sentiment:+.3f}** — Sentiment is roughly '
+                f'**neutral**. The classification is driven more by specific vocabulary '
+                f'and model patterns than emotional tone.'
+            )
+
+        st.markdown(
+            f'**Subjectivity: {subjectivity:.3f}** — '
+            + (
+                'The text is **highly subjective and emotional**, which is common in '
+                'personal attacks and targeted harassment.'
+                if subjectivity > 0.6
+                else 'The text is **moderately subjective**.'
+                if subjectivity > 0.3
+                else 'The text reads as **mostly objective** with little emotional charge.'
+            )
+        )
+
+        # ── CONTEXT ────────────────────────────────────────
+        st.markdown('---')
+        st.markdown('### 📌 Context Explanation')
+
+        context_explanations = {
+            'Unknown / Public comment': (
+                'No specific context was provided. The model uses a neutral baseline. '
+                'Public comments with no known relationship between sender and recipient '
+                'carry a moderate default risk level.'
+            ),
+            'Between strangers': (
+                f'Messages between strangers carry an elevated risk — hostile language '
+                f'between people with no prior relationship is less likely to be banter '
+                f'and more likely to be genuine harassment. A **+{context_boost*100:.0f}% '
+                f'boost** was applied to reflect this.'
+            ),
+            'Between friends (may contain banter)': (
+                f'Friends often use language that would seem hostile out of context — '
+                f'insults as terms of endearment, dark humour, and aggressive-sounding '
+                f'banter are common. A **{context_boost*100:.0f}% adjustment** was applied '
+                f'to account for this, but only when friendly tone signals were also present.'
+            ),
+            'Directed at me personally': (
+                f'When a message is directed personally at someone, the impact is amplified. '
+                f'Targeted personal attacks are more harmful than general hostile language. '
+                f'A **+{context_boost*100:.0f}% boost** was applied.'
+            ),
+            'Repeated messages from same person': (
+                f'Repeated hostile messages from the same person is a defining characteristic '
+                f'of sustained cyberbullying — not just a one-off comment. This context '
+                f'carries the highest risk adjustment: **+{context_boost*100:.0f}%**.'
+            ),
+        }
+        st.markdown(context_explanations.get(context, 'No context explanation available.'))
+
+        # ── INDIRECT INSULTS ───────────────────────────────
+        st.markdown('---')
+        st.markdown('### 🎭 Indirect Insult Detection')
+
+        if is_indirect:
+            st.markdown(
+                f'An indirect insult pattern was matched: **`{matched_pattern}`**. '
+                f'Indirect insults are phrases that attack without using explicit slurs '
+                f'or profanity — things like *"nobody likes you"*, *"ratio"*, or '
+                f'*"cope harder"*. These are common in modern online bullying because '
+                f'they are harder to flag automatically. A **+15% boost** was applied.'
+            )
+        else:
+            st.markdown(
+                'No indirect insult patterns were matched. The message does not contain '
+                'the common indirect attack phrases checked by the system (e.g. '
+                '"nobody likes you", "no one asked", "stay mad", "ratio").'
+            )
+
+        # ── WRITING STYLE ──────────────────────────────────
+        st.markdown('---')
+        st.markdown('### ✍️ Writing Style Signals')
+
+        style_points = []
+
+        if caps_ratio > 0.15:
+            style_points.append(
+                f'**All-caps usage ({caps_ratio*100:.1f}%):** A high proportion of '
+                f'capitalised characters is associated with shouting or aggressive tone '
+                f'in online communication.'
+            )
+        if excl_count > 2:
+            style_points.append(
+                f'**Exclamation marks ({excl_count}):** Multiple exclamation marks '
+                f'reinforce an aggressive or emotionally charged delivery.'
+            )
+        if ques_count > 2:
+            style_points.append(
+                f'**Question marks ({ques_count}):** Repeated questioning can signal '
+                f'confrontational or challenging language.'
+            )
+        if lexical_div < 0.5:
+            style_points.append(
+                f'**Low lexical diversity ({lexical_div:.2f}):** Repetitive word use '
+                f'can indicate targeted, looping attacks on a specific person or trait.'
+            )
+        if word_count < 10:
+            style_points.append(
+                f'**Short message ({word_count} words):** Very short messages that are '
+                f'still flagged tend to be highly concentrated hostile content.'
+            )
+
+        if style_points:
+            for point in style_points:
+                st.markdown(f'- {point}')
+        else:
+            st.markdown(
+                'No unusual writing style signals were detected. The message is written '
+                'in a relatively normal style without aggressive formatting patterns.'
+            )
+
+        # ── FINAL RECOMMENDATION ───────────────────────────
+        st.markdown('---')
+        st.markdown('### 🛡️ What Should You Do?')
+
+        if boosted_prob >= 0.75:
+            st.error(
+                '**Immediate action recommended.** This content shows strong signs of '
+                'cyberbullying. You should:\n\n'
+                '- 📸 **Save evidence** — screenshot the message with timestamps\n'
+                '- 🚫 **Block the sender** on the platform\n'
+                '- 🚨 **Report the content** to the platform moderators\n'
+                '- 🗣️ **Tell a trusted adult, friend, or counsellor** if you are the target\n'
+                '- 🏫 **Escalate to school or authorities** if threats are involved'
+            )
+        elif boosted_prob >= THRESHOLD:
+            st.warning(
+                '**Monitor and document.** This content is borderline and warrants caution:\n\n'
+                '- 📝 **Keep records** of this and any similar messages\n'
+                '- 👀 **Watch for patterns** — repeated behaviour from the same person\n'
+                '- 🗣️ **Talk to someone** if the messages are making you uncomfortable\n'
+                '- 🚫 **Consider blocking** the sender if messages continue'
+            )
+        elif boosted_prob >= 0.35:
+            st.info(
+                '**Stay aware.** The content is ambiguous but not clearly harmful:\n\n'
+                '- 👀 **Pay attention to tone changes** in the conversation\n'
+                '- 🤔 **Consider the context** — is this normal for this relationship?\n'
+                '- 📝 **Note if this is part of a pattern** of behaviour'
+            )
+        else:
+            st.success(
+                '**No action needed.** The content appears safe:\n\n'
+                '- ✅ This message does not show signs of cyberbullying\n'
+                '- 👀 Continue to stay aware of how online conversations make you feel\n'
+                '- 🗣️ Always feel free to talk to someone if something feels off'
+            )
+
+    # suggestions always at bottom (outside all tabs)
+    st.divider()
     for s in get_suggestions(boosted_prob):
         st.markdown(
             f'<div style="background:#1e2a3a;border-left:4px solid #2ecc71;'
             f'padding:10px;border-radius:6px;margin:4px 0;">{s}</div>',
             unsafe_allow_html=True
-        )
-
-    with tab_explain:
-     st.markdown('#### 📖 Detailed Explanation')
-     st.caption('A full narrative breakdown combining all metrics and signals.')
-
-    # ── OVERALL VERDICT ────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🏁 Overall Verdict')
-
-    if boosted_prob >= 0.75:
-        st.error(
-            f'This message scores **{boosted_prob*100:.2f}%**, which is well above '
-            f'the **{THRESHOLD*100:.0f}% threshold**. This is considered **high-risk '
-            f'cyberbullying**. The combination of language patterns, tone, and context '
-            f'strongly suggests harmful intent toward the target.'
-        )
-    elif boosted_prob >= THRESHOLD:
-        st.warning(
-            f'This message scores **{boosted_prob*100:.2f}%**, crossing the '
-            f'**{THRESHOLD*100:.0f}% threshold**. This is flagged as **potential '
-            f'cyberbullying**. While not conclusive, the signals present are concerning '
-            f'enough to warrant attention and monitoring.'
-        )
-    elif boosted_prob >= 0.35:
-        st.info(
-            f'This message scores **{boosted_prob*100:.2f}%**, below the threshold but '
-            f'in an ambiguous range. It may be **banter or mixed-tone communication**. '
-            f'Context plays a big role here — the same words between friends may be '
-            f'harmless but between strangers could signal hostility.'
-        )
-    else:
-        st.success(
-            f'This message scores **{boosted_prob*100:.2f}%**, well below the '
-            f'**{THRESHOLD*100:.0f}% threshold**. The content does **not appear to be '
-            f'cyberbullying**. The language, tone, and context all suggest this is '
-            f'normal communication.'
-        )
-
-    # ── MODEL ANALYSIS ─────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🤖 What the AI Model Detected')
-
-    if raw_prob >= 0.75:
-        model_explanation = (
-            f'The RoBERTa model — trained on thousands of real cyberbullying examples — '
-            f'gave this text a raw score of **{raw_prob*100:.2f}%**. This is a very high '
-            f'base score, meaning the sentence structure, word choices, and phrasing '
-            f'closely resemble confirmed bullying content in its training data.'
-        )
-    elif raw_prob >= 0.5:
-        model_explanation = (
-            f'The RoBERTa model gave a raw score of **{raw_prob*100:.2f}%**, meaning it '
-            f'found moderate-to-strong signals of bullying language. The model detected '
-            f'patterns in the text — such as phrasing, tone, or word combinations — '
-            f'that are statistically associated with cyberbullying.'
-        )
-    elif raw_prob >= 0.35:
-        model_explanation = (
-            f'The RoBERTa model gave a raw score of **{raw_prob*100:.2f}%**. The model '
-            f'found some patterns associated with bullying but they are not strong enough '
-            f'to be conclusive on their own. The text sits in an ambiguous zone.'
-        )
-    else:
-        model_explanation = (
-            f'The RoBERTa model gave a low raw score of **{raw_prob*100:.2f}%**, meaning '
-            f'it found very few or no patterns associated with cyberbullying. The language '
-            f'structure does not resemble bullying content.'
-        )
-    st.markdown(model_explanation)
-
-    # ── TONE ANALYSIS ──────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🎭 Tone Analysis')
-
-    if tone == 'friendly':
-        st.markdown(
-            f'The tone was detected as **friendly/banter** ({tone_reason}). '
-            f'This is a mitigating factor — the presence of friendly language markers '
-            f'such as casual expressions, banter emojis, or affectionate terms suggests '
-            f'the message may not carry genuine harmful intent. '
-            f'The score was reduced by **{abs(mitigation)*100:.0f}%** as a result.'
-        )
-    elif tone == 'mocking':
-        st.markdown(
-            f'The tone was detected as **mocking** ({tone_reason}). '
-            f'Mocking language — even when disguised as humour — is a known vector '
-            f'for cyberbullying. It can belittle, embarrass, or demean the target '
-            f'while giving the sender plausible deniability. No mitigation was applied.'
-        )
-    elif tone == 'sarcastic':
-        st.markdown(
-            f'The tone was detected as **sarcastic** ({tone_reason}). '
-            f'Sarcasm is commonly used to mask bullying intent — a genuinely harmful '
-            f'message can be framed as a joke. Because of this, sarcasm does **not** '
-            f'trigger friendly mitigation. The score was not reduced.'
-        )
-    else:
-        st.markdown(
-            f'The tone was detected as **neutral** — no strong friendly or hostile '
-            f'tone markers were found. The score is therefore driven primarily by the '
-            f'language content itself rather than emotional delivery.'
-        )
-
-    # ── LANGUAGE & VOCABULARY ──────────────────────────────
-    st.markdown('---')
-    st.markdown('### 📝 Language & Vocabulary Breakdown')
-
-    if profane_cnt > 0:
-        st.markdown(
-            f'**Profanity:** {profane_cnt} profane word(s) were detected. Profanity '
-            f'is a direct signal of hostile language and is fed as a feature directly '
-            f'into the classifier. The more profane words present, the higher the '
-            f'bullying likelihood.'
-        )
-    else:
-        st.markdown(
-            f'**Profanity:** No profane words were detected. This is a positive signal '
-            f'that the language is not overtly hostile.'
-        )
-
-    threat_words_found = [w for w in flagged_words if w['category'] == 'threat']
-    hate_words_found   = [w for w in flagged_words if w['category'] == 'hate']
-    excl_words_found   = [w for w in flagged_words if w['category'] == 'exclusion']
-
-    if threat_words_found:
-        st.markdown(
-            f'**Threat/Violence vocabulary:** The word(s) '
-            f'**{", ".join(w["word"] for w in threat_words_found)}** were detected. '
-            f'These words explicitly reference physical harm or threats and are among '
-            f'the strongest indicators of cyberbullying or harassment.'
-        )
-
-    if hate_words_found:
-        st.markdown(
-            f'**Hate/Dehumanising vocabulary:** The word(s) '
-            f'**{", ".join(w["word"] for w in hate_words_found)}** were detected. '
-            f'This type of language is used to degrade, demean, or dehumanise the '
-            f'target — a hallmark of sustained bullying behaviour.'
-        )
-
-    if excl_words_found:
-        st.markdown(
-            f'**Exclusion/Social attack vocabulary:** The word(s) '
-            f'**{", ".join(w["word"] for w in excl_words_found)}** were detected. '
-            f'Social exclusion language targets a person\'s sense of belonging and '
-            f'self-worth, and is a subtle but damaging form of cyberbullying.'
-        )
-
-    if not threat_words_found and not hate_words_found and not excl_words_found and profane_cnt == 0:
-        st.markdown(
-            '**Vocabulary:** No explicitly harmful words were found in the known '
-            'dictionaries. The score is driven by the overall sentence-level patterns '
-            'learned by RoBERTa, not individual words.'
-        )
-
-    # ── SENTIMENT ──────────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 😡 Sentiment & Emotional Tone')
-
-    if sentiment < -0.5:
-        st.markdown(
-            f'**Sentiment polarity: {sentiment:+.3f}** — This is a **very strongly '
-            f'negative** sentiment score. The text reads as highly hostile, angry, or '
-            f'attacking. Strong negative sentiment combined with other signals is a '
-            f'reliable indicator of harmful intent.'
-        )
-    elif sentiment < -0.2:
-        st.markdown(
-            f'**Sentiment polarity: {sentiment:+.3f}** — This is a **moderately '
-            f'negative** sentiment. The text leans hostile but stops short of being '
-            f'extremely aggressive on sentiment alone.'
-        )
-    elif sentiment > 0.2:
-        st.markdown(
-            f'**Sentiment polarity: {sentiment:+.3f}** — This is a **positive** '
-            f'sentiment score. Positive sentiment generally works against a bullying '
-            f'classification, though it can occasionally mask sarcasm or backhanded '
-            f'comments.'
-        )
-    else:
-        st.markdown(
-            f'**Sentiment polarity: {sentiment:+.3f}** — Sentiment is roughly '
-            f'**neutral**. The classification is driven more by specific vocabulary '
-            f'and model patterns than emotional tone.'
-        )
-
-    st.markdown(
-        f'**Subjectivity: {subjectivity:.3f}** — '
-        + (
-            'The text is **highly subjective and emotional**, which is common in '
-            'personal attacks and targeted harassment.'
-            if subjectivity > 0.6
-            else 'The text is **moderately subjective**.'
-            if subjectivity > 0.3
-            else 'The text reads as **mostly objective** with little emotional charge.'
-        )
-    )
-
-    # ── CONTEXT ────────────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 📌 Context Explanation')
-
-    context_explanations = {
-        'Unknown / Public comment': (
-            'No specific context was provided. The model uses a neutral baseline. '
-            'Public comments with no known relationship between sender and recipient '
-            'carry a moderate default risk level.'
-        ),
-        'Between strangers': (
-            f'Messages between strangers carry an elevated risk — hostile language '
-            f'between people with no prior relationship is less likely to be banter '
-            f'and more likely to be genuine harassment. A **+{context_boost*100:.0f}% '
-            f'boost** was applied to reflect this.'
-        ),
-        'Between friends (may contain banter)': (
-            f'Friends often use language that would seem hostile out of context — '
-            f'insults as terms of endearment, dark humour, and aggressive-sounding '
-            f'banter are common. A **{context_boost*100:.0f}% adjustment** was applied '
-            f'to account for this, but only when friendly tone signals were also present.'
-        ),
-        'Directed at me personally': (
-            f'When a message is directed personally at someone, the impact is amplified. '
-            f'Targeted personal attacks are more harmful than general hostile language. '
-            f'A **+{context_boost*100:.0f}% boost** was applied.'
-        ),
-        'Repeated messages from same person': (
-            f'Repeated hostile messages from the same person is a defining characteristic '
-            f'of sustained cyberbullying — not just a one-off comment. This context '
-            f'carries the highest risk adjustment: **+{context_boost*100:.0f}%**.'
-        ),
-    }
-    st.markdown(context_explanations.get(context, 'No context explanation available.'))
-
-    # ── INDIRECT INSULTS ───────────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🎭 Indirect Insult Detection')
-
-    if is_indirect:
-        st.markdown(
-            f'An indirect insult pattern was matched: **`{matched_pattern}`**. '
-            f'Indirect insults are phrases that attack without using explicit slurs '
-            f'or profanity — things like *"nobody likes you"*, *"ratio"*, or '
-            f'*"cope harder"*. These are common in modern online bullying because '
-            f'they are harder to flag automatically. A **+15% boost** was applied.'
-        )
-    else:
-        st.markdown(
-            'No indirect insult patterns were matched. The message does not contain '
-            'the common indirect attack phrases checked by the system (e.g. '
-            '"nobody likes you", "no one asked", "stay mad", "ratio").'
-        )
-
-    # ── WRITING STYLE ──────────────────────────────────────
-    st.markdown('---')
-    st.markdown('### ✍️ Writing Style Signals')
-
-    style_points = []
-
-    if caps_ratio > 0.15:
-        style_points.append(
-            f'**All-caps usage ({caps_ratio*100:.1f}%):** A high proportion of '
-            f'capitalised characters is associated with shouting or aggressive tone '
-            f'in online communication.'
-        )
-    if excl_count > 2:
-        style_points.append(
-            f'**Exclamation marks ({excl_count}):** Multiple exclamation marks '
-            f'reinforce an aggressive or emotionally charged delivery.'
-        )
-    if ques_count > 2:
-        style_points.append(
-            f'**Question marks ({ques_count}):** Repeated questioning can signal '
-            f'confrontational or challenging language.'
-        )
-    if lexical_div < 0.5:
-        style_points.append(
-            f'**Low lexical diversity ({lexical_div:.2f}):** Repetitive word use '
-            f'can indicate targeted, looping attacks on a specific person or trait.'
-        )
-    if word_count < 10:
-        style_points.append(
-            f'**Short message ({word_count} words):** Very short messages that are '
-            f'still flagged tend to be highly concentrated hostile content.'
-        )
-
-    if style_points:
-        for point in style_points:
-            st.markdown(f'- {point}')
-    else:
-        st.markdown(
-            'No unusual writing style signals were detected. The message is written '
-            'in a relatively normal style without aggressive formatting patterns.'
-        )
-
-    # ── FINAL RECOMMENDATION ───────────────────────────────
-    st.markdown('---')
-    st.markdown('### 🛡️ What Should You Do?')
-
-    if boosted_prob >= 0.75:
-        st.error(
-            '**Immediate action recommended.** This content shows strong signs of '
-            'cyberbullying. You should:\n\n'
-            '- 📸 **Save evidence** — screenshot the message with timestamps\n'
-            '- 🚫 **Block the sender** on the platform\n'
-            '- 🚨 **Report the content** to the platform moderators\n'
-            '- 🗣️ **Tell a trusted adult, friend, or counsellor** if you are the target\n'
-            '- 🏫 **Escalate to school or authorities** if threats are involved'
-        )
-    elif boosted_prob >= THRESHOLD:
-        st.warning(
-            '**Monitor and document.** This content is borderline and warrants caution:\n\n'
-            '- 📝 **Keep records** of this and any similar messages\n'
-            '- 👀 **Watch for patterns** — repeated behaviour from the same person\n'
-            '- 🗣️ **Talk to someone** if the messages are making you uncomfortable\n'
-            '- 🚫 **Consider blocking** the sender if messages continue'
-        )
-    elif boosted_prob >= 0.35:
-        st.info(
-            '**Stay aware.** The content is ambiguous but not clearly harmful:\n\n'
-            '- 👀 **Pay attention to tone changes** in the conversation\n'
-            '- 🤔 **Consider the context** — is this normal for this relationship?\n'
-            '- 📝 **Note if this is part of a pattern** of behaviour'
-        )
-    else:
-        st.success(
-            '**No action needed.** The content appears safe:\n\n'
-            '- ✅ This message does not show signs of cyberbullying\n'
-            '- 👀 Continue to stay aware of how online conversations make you feel\n'
-            '- 🗣️ Always feel free to talk to someone if something feels off'
         )
 
 # ──────────────────────────────────────────────────────────
@@ -1385,17 +1215,11 @@ if 'context_text' not in st.session_state:
 if 'context_img' not in st.session_state:
     st.session_state.context_img = 'Unknown / Public comment'
 
-if 'analyze_text' not in st.session_state:
-    st.session_state.analyze_text = False
+if 'result_text' not in st.session_state:
+    st.session_state.result_text = ''
 
-if 'analyze_img' not in st.session_state:
-    st.session_state.analyze_img = False
-
-if 'text_input' not in st.session_state:
-    st.session_state.text_input = ''
-
-if 'ocr_text' not in st.session_state:
-    st.session_state.ocr_text = ''
+if 'result_context' not in st.session_state:
+    st.session_state.result_context = 'Unknown / Public comment'
 
 # ──────────────────────────────────────────────────────────
 # UI
@@ -1406,19 +1230,13 @@ st.set_page_config(
     layout='centered'
 )
 
-st.title(
-    '🛡️ CyberGuard — Cyberbullying Detector'
-)
-
+st.title('🛡️ CyberGuard — Cyberbullying Detector')
 st.caption(
     f'RoBERTa + Feature Engineering · '
     f'Accuracy: {config["accuracy"]:.2f}%'
 )
 
-with st.spinner(
-    'Loading models...'
-):
-
+with st.spinner('Loading models...'):
     tokenizer, roberta, model, scaler = load_models()
 
 CONTEXT_OPTIONS = [
@@ -1429,48 +1247,73 @@ CONTEXT_OPTIONS = [
     'Repeated messages from same person',
 ]
 
-# tabs
+# ── TOP-LEVEL TABS ─────────────────────────────────────────
 tab1, tab2, tab3 = st.tabs([
     '💬 Text',
     '🖼️ Screenshot',
-    '📊 Analysis',     
+    '📊 Analysis',
 ])
 
+# ──────────────────────────────────────────────────────────
+# TEXT TAB
+# ──────────────────────────────────────────────────────────
 with tab1:
-    # just input fields, no show_result() here
-    text_input = st.text_area('Enter text:', height=150)
-    selected_context_text = st.selectbox('📌 Context', options=CONTEXT_OPTIONS)
+    text_input            = st.text_area('Enter text:', height=150)
+    selected_context_text = st.selectbox('📌 Context', options=CONTEXT_OPTIONS, key='ctx_text')
 
     if st.button('Analyze Text', use_container_width=True):
-        st.session_state.result_text = text_input
-        st.session_state.result_context = selected_context_text
+        if text_input.strip():
+            st.session_state.result_text    = text_input
+            st.session_state.result_context = selected_context_text
+            st.success('✅ Text saved — switch to the 📊 Analysis tab to see results.')
+        else:
+            st.warning('Please enter some text first.')
 
+# ──────────────────────────────────────────────────────────
+# SCREENSHOT TAB  ← FIX: context now saved correctly on button click
+# ──────────────────────────────────────────────────────────
 with tab2:
-    # just upload + OCR, no show_result() here
-    uploaded_file = st.file_uploader('Upload Screenshot', type=['png','jpg','jpeg','webp'])
+    uploaded_file = st.file_uploader(
+        'Upload Screenshot', type=['png', 'jpg', 'jpeg', 'webp']
+    )
+
     if uploaded_file:
         image = Image.open(uploaded_file)
         st.image(image, use_container_width=True)
-        ocr_text = extract_text_from_image(image)
-        if ocr_text:
-            st.session_state.result_text = ocr_text
-            selected_context_img = st.selectbox('📌 Context', options=CONTEXT_OPTIONS)
-            if st.button('Analyze Screenshot', use_container_width=True):
-                st.session_state.result_context = selected_context_img
 
+        with st.spinner('Extracting text from image...'):
+            ocr_text = extract_text_from_image(image)
+
+        if ocr_text:
+            extracted_box = st.text_area(
+                'Extracted text (edit if needed):',
+                value=ocr_text,
+                height=120
+            )
+            selected_context_img = st.selectbox(
+                '📌 Context', options=CONTEXT_OPTIONS, key='ctx_img'
+            )
+
+            # FIX: context is now captured inside the button block
+            if st.button('Analyze Screenshot', use_container_width=True):
+                st.session_state.result_text    = extracted_box
+                st.session_state.result_context = selected_context_img  # ← was missing
+                st.success('✅ Screenshot text saved — switch to the 📊 Analysis tab.')
+        else:
+            st.error(
+                'Could not extract any text from this image. '
+                'Try a clearer screenshot with readable text.'
+            )
+
+# ──────────────────────────────────────────────────────────
+# ANALYSIS TAB
+# ──────────────────────────────────────────────────────────
 with tab3:
-    # 5 analysis tabs appear here
-    if 'result_text' in st.session_state and st.session_state.result_text:
+    if st.session_state.result_text.strip():
         show_result(
             st.session_state.result_text,
             tokenizer, roberta, model, scaler,
-            st.session_state.get('result_context', 'Unknown / Public comment')
+            st.session_state.result_context,
         )
     else:
-        st.info('Analyze some text or a screenshot first.')
-
-        if 'result_text' not in st.session_state:
-         st.session_state.result_text = ''
-
-    if 'result_context' not in st.session_state:
-        st.session_state.result_context = 'Unknown / Public comment'
+        st.info('💬 Enter text in the Text tab or upload a screenshot, then click Analyze.')
