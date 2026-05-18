@@ -864,12 +864,150 @@ def show_result(text, tokenizer, roberta, model, scaler,
                 f'**Conclusion:** Score of {boosted_prob*100:.2f}% is well below the '
                 f'{THRESHOLD*100:.0f}% threshold. No strong cyberbullying indicators.')
 
-    # ──────────────────────────────────────────────────────
-    # TAB: DETAILED EXPLANATION  ← FIX: everything is indented inside with block
+     # ──────────────────────────────────────────────────────
+    # TAB: DETAILED EXPLANATION
     # ──────────────────────────────────────────────────────
     with tab_explain:
         st.markdown('#### 📖 Detailed Explanation')
         st.caption('A full narrative breakdown combining all metrics and signals.')
+
+        # ── OVERALL SUMMARY ────────────────────────────────
+        st.markdown('---')
+        st.markdown('### 📋 Overall Summary')
+
+        if boosted_prob >= 0.75:
+            risk_level = 'High Risk'
+            risk_color = '#e74c3c'
+            risk_emoji = '🚨'
+        elif boosted_prob >= THRESHOLD:
+            risk_level = 'Potential Risk'
+            risk_color = '#f39c12'
+            risk_emoji = '⚠️'
+        elif boosted_prob >= 0.35:
+            risk_level = 'Ambiguous / Borderline'
+            risk_color = '#3498db'
+            risk_emoji = '😐'
+        else:
+            risk_level = 'Low Risk'
+            risk_color = '#2ecc71'
+            risk_emoji = '✅'
+
+        st.markdown(
+            f'<div style="background:#0d1b2a;border:2px solid {risk_color};'
+            f'border-radius:12px;padding:20px 24px;margin-bottom:16px;">'
+
+            f'<div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">'
+            f'<span style="font-size:32px">{risk_emoji}</span>'
+            f'<div>'
+            f'<div style="font-size:20px;font-weight:700;color:{risk_color}">{risk_level}</div>'
+            f'<div style="font-size:13px;color:#8899aa">Final Score: '
+            f'<strong style="color:#dde">{boosted_prob*100:.2f}%</strong> · '
+            f'Threshold: <strong style="color:#dde">{THRESHOLD*100:.0f}%</strong> · '
+            f'Raw Model: <strong style="color:#dde">{raw_prob*100:.2f}%</strong></div>'
+            f'</div></div>'
+
+            f'<div style="margin-bottom:16px;">'
+            f'<div style="display:flex;justify-content:space-between;'
+            f'font-size:11px;color:#8899aa;margin-bottom:4px;">'
+            f'<span>0%</span><span>Threshold {THRESHOLD*100:.0f}%</span><span>100%</span></div>'
+            f'<div style="background:#1a2332;border-radius:6px;height:12px;position:relative;">'
+            f'<div style="position:absolute;left:{THRESHOLD*100:.1f}%;top:0;bottom:0;'
+            f'width:2px;background:#ffffff44;"></div>'
+            f'<div style="background:{risk_color};width:{boosted_prob*100:.1f}%;'
+            f'height:12px;border-radius:6px;transition:width .4s;"></div>'
+            f'</div></div>'
+
+            f'<div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">'
+
+            f'<div style="background:#1a2332;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:18px">🎭</div>'
+            f'<div style="font-size:12px;color:#8899aa;margin:2px 0">Tone</div>'
+            f'<div style="font-size:13px;font-weight:700;color:#dde;text-transform:capitalize">'
+            f'{tone}</div></div>'
+
+            f'<div style="background:#1a2332;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:18px">{"😡" if sentiment < -0.2 else "😊" if sentiment > 0.1 else "😐"}</div>'
+            f'<div style="font-size:12px;color:#8899aa;margin:2px 0">Sentiment</div>'
+            f'<div style="font-size:13px;font-weight:700;color:#dde">{sentiment:+.2f}</div></div>'
+
+            f'<div style="background:#1a2332;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:18px">🔤</div>'
+            f'<div style="font-size:12px;color:#8899aa;margin:2px 0">Flagged Words</div>'
+            f'<div style="font-size:13px;font-weight:700;color:{"#e74c3c" if flagged_words else "#2ecc71"}">'
+            f'{len(flagged_words)}</div></div>'
+
+            f'<div style="background:#1a2332;border-radius:8px;padding:10px;text-align:center;">'
+            f'<div style="font-size:18px">📌</div>'
+            f'<div style="font-size:12px;color:#8899aa;margin:2px 0">Context</div>'
+            f'<div style="font-size:11px;font-weight:700;color:#dde;line-height:1.2">'
+            f'{context.split("/")[0].strip()}</div></div>'
+
+            f'</div></div>',
+            unsafe_allow_html=True
+        )
+
+        tone_phrase = {
+            'friendly':  'The tone appears friendly or playful',
+            'mocking':   'The tone is mocking or belittling',
+            'sarcastic': 'The tone is sarcastic, which can mask bullying intent',
+            'neutral':   'The tone is neutral',
+        }.get(tone, 'The tone is neutral')
+
+        indirect_phrase = (
+            f'An indirect insult pattern (`{matched_pattern}`) was also detected, adding +15% to the score. '
+            if is_indirect else ''
+        )
+
+        context_phrase = {
+            'Unknown / Public comment':             'no specific context was provided',
+            'Between strangers':                    'the message is between strangers (+10% risk)',
+            'Between friends (may contain banter)': 'the message is between friends (−25% risk)',
+            'Directed at me personally':            'the message is directed personally at someone (+20% risk)',
+            'Repeated messages from same person':   'this is part of repeated messages from the same person (+25% risk)',
+        }.get(context, 'no specific context was provided')
+
+        mitigation_phrase = (
+            f' Friendly signals in the message reduced the score by {abs(mitigation)*100:.0f}%.'
+            if mitigation < 0 else ''
+        )
+
+        flagged_phrase = (
+            f' {len(flagged_words)} word(s) or phrase(s) were flagged across categories including '
+            f'{", ".join(set(w["category"] for w in flagged_words))}.'
+            if flagged_words else ' No individual harmful words were matched in the dictionaries.'
+        )
+
+        summary_text = (
+            f'The RoBERTa model gave this message a raw score of **{raw_prob*100:.1f}%**. '
+            f'{tone_phrase}. {indirect_phrase}'
+            f'The selected context indicates that {context_phrase}.{mitigation_phrase} '
+            f'After all adjustments, the final score is **{boosted_prob*100:.2f}%**, '
+            f'which is **{"above" if boosted_prob >= THRESHOLD else "below"} the '
+            f'{THRESHOLD*100:.0f}% threshold** — classifying this as **{risk_level}**.{flagged_phrase}'
+        )
+
+        st.markdown(
+            f'<div style="background:#1a2332;border-radius:10px;padding:16px 20px;'
+            f'font-size:14px;line-height:1.8;color:#ccd;">{summary_text}</div>',
+            unsafe_allow_html=True
+        )
+
+        components_summary = [
+            ('🤖 RoBERTa',        raw_prob,                        '#3498db'),
+            ('🎭 Indirect Boost', 0.15 if is_indirect else 0.0,    '#e74c3c'),
+            ('📌 Context',        context_boost,                   '#f39c12' if context_boost > 0 else '#2ecc71'),
+            ('😊 Mitigation',     mitigation,                      '#2ecc71'),
+        ]
+        pills_html = '<div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">'
+        for label, val, color in components_summary:
+            sign = '+' if val >= 0 else ''
+            pills_html += (
+                f'<span style="background:#1a2332;border:1px solid {color}55;'
+                f'color:{color};border-radius:20px;padding:4px 14px;font-size:12px;font-weight:700;">'
+                f'{label}: {sign}{val*100:.1f}%</span>'
+            )
+        pills_html += '</div>'
+        st.markdown(pills_html, unsafe_allow_html=True)
 
         # ── OVERALL VERDICT ────────────────────────────────
         st.markdown('---')
