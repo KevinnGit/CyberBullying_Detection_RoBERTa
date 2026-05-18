@@ -665,13 +665,14 @@ def show_result(text, tokenizer, roberta, model, scaler,
     # ══════════════════════════════════════════════════════
     # TABS
     # ══════════════════════════════════════════════════════
-    tab_words, tab_score, tab_text, tab_signals, tab_why = st.tabs([
-        '🔦 Word Analysis',
-        '📊 Score Breakdown',
-        '📝 Text Statistics',
-        '🔎 Detected Signals',
-        '💡 Why This Score?',
-    ])
+    tab_words, tab_score, tab_text, tab_signals, tab_why, tab_explain = st.tabs([
+    '🔦 Word Analysis',
+    '📊 Score Breakdown',
+    '📝 Text Statistics',
+    '🔎 Detected Signals',
+    '💡 Why This Score?',
+    '📖 Detailed Explanation',   # ← new
+])
 
     # ──────────────────────────────────────────────────────
     # TAB: WORD ANALYSIS
@@ -1045,7 +1046,335 @@ def show_result(text, tokenizer, roberta, model, scaler,
             unsafe_allow_html=True
         )
 
+    with tab_explain:
+     st.markdown('#### 📖 Detailed Explanation')
+     st.caption('A full narrative breakdown combining all metrics and signals.')
 
+    # ── OVERALL VERDICT ────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🏁 Overall Verdict')
+
+    if boosted_prob >= 0.75:
+        st.error(
+            f'This message scores **{boosted_prob*100:.2f}%**, which is well above '
+            f'the **{THRESHOLD*100:.0f}% threshold**. This is considered **high-risk '
+            f'cyberbullying**. The combination of language patterns, tone, and context '
+            f'strongly suggests harmful intent toward the target.'
+        )
+    elif boosted_prob >= THRESHOLD:
+        st.warning(
+            f'This message scores **{boosted_prob*100:.2f}%**, crossing the '
+            f'**{THRESHOLD*100:.0f}% threshold**. This is flagged as **potential '
+            f'cyberbullying**. While not conclusive, the signals present are concerning '
+            f'enough to warrant attention and monitoring.'
+        )
+    elif boosted_prob >= 0.35:
+        st.info(
+            f'This message scores **{boosted_prob*100:.2f}%**, below the threshold but '
+            f'in an ambiguous range. It may be **banter or mixed-tone communication**. '
+            f'Context plays a big role here — the same words between friends may be '
+            f'harmless but between strangers could signal hostility.'
+        )
+    else:
+        st.success(
+            f'This message scores **{boosted_prob*100:.2f}%**, well below the '
+            f'**{THRESHOLD*100:.0f}% threshold**. The content does **not appear to be '
+            f'cyberbullying**. The language, tone, and context all suggest this is '
+            f'normal communication.'
+        )
+
+    # ── MODEL ANALYSIS ─────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🤖 What the AI Model Detected')
+
+    if raw_prob >= 0.75:
+        model_explanation = (
+            f'The RoBERTa model — trained on thousands of real cyberbullying examples — '
+            f'gave this text a raw score of **{raw_prob*100:.2f}%**. This is a very high '
+            f'base score, meaning the sentence structure, word choices, and phrasing '
+            f'closely resemble confirmed bullying content in its training data.'
+        )
+    elif raw_prob >= 0.5:
+        model_explanation = (
+            f'The RoBERTa model gave a raw score of **{raw_prob*100:.2f}%**, meaning it '
+            f'found moderate-to-strong signals of bullying language. The model detected '
+            f'patterns in the text — such as phrasing, tone, or word combinations — '
+            f'that are statistically associated with cyberbullying.'
+        )
+    elif raw_prob >= 0.35:
+        model_explanation = (
+            f'The RoBERTa model gave a raw score of **{raw_prob*100:.2f}%**. The model '
+            f'found some patterns associated with bullying but they are not strong enough '
+            f'to be conclusive on their own. The text sits in an ambiguous zone.'
+        )
+    else:
+        model_explanation = (
+            f'The RoBERTa model gave a low raw score of **{raw_prob*100:.2f}%**, meaning '
+            f'it found very few or no patterns associated with cyberbullying. The language '
+            f'structure does not resemble bullying content.'
+        )
+    st.markdown(model_explanation)
+
+    # ── TONE ANALYSIS ──────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🎭 Tone Analysis')
+
+    if tone == 'friendly':
+        st.markdown(
+            f'The tone was detected as **friendly/banter** ({tone_reason}). '
+            f'This is a mitigating factor — the presence of friendly language markers '
+            f'such as casual expressions, banter emojis, or affectionate terms suggests '
+            f'the message may not carry genuine harmful intent. '
+            f'The score was reduced by **{abs(mitigation)*100:.0f}%** as a result.'
+        )
+    elif tone == 'mocking':
+        st.markdown(
+            f'The tone was detected as **mocking** ({tone_reason}). '
+            f'Mocking language — even when disguised as humour — is a known vector '
+            f'for cyberbullying. It can belittle, embarrass, or demean the target '
+            f'while giving the sender plausible deniability. No mitigation was applied.'
+        )
+    elif tone == 'sarcastic':
+        st.markdown(
+            f'The tone was detected as **sarcastic** ({tone_reason}). '
+            f'Sarcasm is commonly used to mask bullying intent — a genuinely harmful '
+            f'message can be framed as a joke. Because of this, sarcasm does **not** '
+            f'trigger friendly mitigation. The score was not reduced.'
+        )
+    else:
+        st.markdown(
+            f'The tone was detected as **neutral** — no strong friendly or hostile '
+            f'tone markers were found. The score is therefore driven primarily by the '
+            f'language content itself rather than emotional delivery.'
+        )
+
+    # ── LANGUAGE & VOCABULARY ──────────────────────────────
+    st.markdown('---')
+    st.markdown('### 📝 Language & Vocabulary Breakdown')
+
+    if profane_cnt > 0:
+        st.markdown(
+            f'**Profanity:** {profane_cnt} profane word(s) were detected. Profanity '
+            f'is a direct signal of hostile language and is fed as a feature directly '
+            f'into the classifier. The more profane words present, the higher the '
+            f'bullying likelihood.'
+        )
+    else:
+        st.markdown(
+            f'**Profanity:** No profane words were detected. This is a positive signal '
+            f'that the language is not overtly hostile.'
+        )
+
+    threat_words_found = [w for w in flagged_words if w['category'] == 'threat']
+    hate_words_found   = [w for w in flagged_words if w['category'] == 'hate']
+    excl_words_found   = [w for w in flagged_words if w['category'] == 'exclusion']
+
+    if threat_words_found:
+        st.markdown(
+            f'**Threat/Violence vocabulary:** The word(s) '
+            f'**{", ".join(w["word"] for w in threat_words_found)}** were detected. '
+            f'These words explicitly reference physical harm or threats and are among '
+            f'the strongest indicators of cyberbullying or harassment.'
+        )
+
+    if hate_words_found:
+        st.markdown(
+            f'**Hate/Dehumanising vocabulary:** The word(s) '
+            f'**{", ".join(w["word"] for w in hate_words_found)}** were detected. '
+            f'This type of language is used to degrade, demean, or dehumanise the '
+            f'target — a hallmark of sustained bullying behaviour.'
+        )
+
+    if excl_words_found:
+        st.markdown(
+            f'**Exclusion/Social attack vocabulary:** The word(s) '
+            f'**{", ".join(w["word"] for w in excl_words_found)}** were detected. '
+            f'Social exclusion language targets a person\'s sense of belonging and '
+            f'self-worth, and is a subtle but damaging form of cyberbullying.'
+        )
+
+    if not threat_words_found and not hate_words_found and not excl_words_found and profane_cnt == 0:
+        st.markdown(
+            '**Vocabulary:** No explicitly harmful words were found in the known '
+            'dictionaries. The score is driven by the overall sentence-level patterns '
+            'learned by RoBERTa, not individual words.'
+        )
+
+    # ── SENTIMENT ──────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 😡 Sentiment & Emotional Tone')
+
+    if sentiment < -0.5:
+        st.markdown(
+            f'**Sentiment polarity: {sentiment:+.3f}** — This is a **very strongly '
+            f'negative** sentiment score. The text reads as highly hostile, angry, or '
+            f'attacking. Strong negative sentiment combined with other signals is a '
+            f'reliable indicator of harmful intent.'
+        )
+    elif sentiment < -0.2:
+        st.markdown(
+            f'**Sentiment polarity: {sentiment:+.3f}** — This is a **moderately '
+            f'negative** sentiment. The text leans hostile but stops short of being '
+            f'extremely aggressive on sentiment alone.'
+        )
+    elif sentiment > 0.2:
+        st.markdown(
+            f'**Sentiment polarity: {sentiment:+.3f}** — This is a **positive** '
+            f'sentiment score. Positive sentiment generally works against a bullying '
+            f'classification, though it can occasionally mask sarcasm or backhanded '
+            f'comments.'
+        )
+    else:
+        st.markdown(
+            f'**Sentiment polarity: {sentiment:+.3f}** — Sentiment is roughly '
+            f'**neutral**. The classification is driven more by specific vocabulary '
+            f'and model patterns than emotional tone.'
+        )
+
+    st.markdown(
+        f'**Subjectivity: {subjectivity:.3f}** — '
+        + (
+            'The text is **highly subjective and emotional**, which is common in '
+            'personal attacks and targeted harassment.'
+            if subjectivity > 0.6
+            else 'The text is **moderately subjective**.'
+            if subjectivity > 0.3
+            else 'The text reads as **mostly objective** with little emotional charge.'
+        )
+    )
+
+    # ── CONTEXT ────────────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 📌 Context Explanation')
+
+    context_explanations = {
+        'Unknown / Public comment': (
+            'No specific context was provided. The model uses a neutral baseline. '
+            'Public comments with no known relationship between sender and recipient '
+            'carry a moderate default risk level.'
+        ),
+        'Between strangers': (
+            f'Messages between strangers carry an elevated risk — hostile language '
+            f'between people with no prior relationship is less likely to be banter '
+            f'and more likely to be genuine harassment. A **+{context_boost*100:.0f}% '
+            f'boost** was applied to reflect this.'
+        ),
+        'Between friends (may contain banter)': (
+            f'Friends often use language that would seem hostile out of context — '
+            f'insults as terms of endearment, dark humour, and aggressive-sounding '
+            f'banter are common. A **{context_boost*100:.0f}% adjustment** was applied '
+            f'to account for this, but only when friendly tone signals were also present.'
+        ),
+        'Directed at me personally': (
+            f'When a message is directed personally at someone, the impact is amplified. '
+            f'Targeted personal attacks are more harmful than general hostile language. '
+            f'A **+{context_boost*100:.0f}% boost** was applied.'
+        ),
+        'Repeated messages from same person': (
+            f'Repeated hostile messages from the same person is a defining characteristic '
+            f'of sustained cyberbullying — not just a one-off comment. This context '
+            f'carries the highest risk adjustment: **+{context_boost*100:.0f}%**.'
+        ),
+    }
+    st.markdown(context_explanations.get(context, 'No context explanation available.'))
+
+    # ── INDIRECT INSULTS ───────────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🎭 Indirect Insult Detection')
+
+    if is_indirect:
+        st.markdown(
+            f'An indirect insult pattern was matched: **`{matched_pattern}`**. '
+            f'Indirect insults are phrases that attack without using explicit slurs '
+            f'or profanity — things like *"nobody likes you"*, *"ratio"*, or '
+            f'*"cope harder"*. These are common in modern online bullying because '
+            f'they are harder to flag automatically. A **+15% boost** was applied.'
+        )
+    else:
+        st.markdown(
+            'No indirect insult patterns were matched. The message does not contain '
+            'the common indirect attack phrases checked by the system (e.g. '
+            '"nobody likes you", "no one asked", "stay mad", "ratio").'
+        )
+
+    # ── WRITING STYLE ──────────────────────────────────────
+    st.markdown('---')
+    st.markdown('### ✍️ Writing Style Signals')
+
+    style_points = []
+
+    if caps_ratio > 0.15:
+        style_points.append(
+            f'**All-caps usage ({caps_ratio*100:.1f}%):** A high proportion of '
+            f'capitalised characters is associated with shouting or aggressive tone '
+            f'in online communication.'
+        )
+    if excl_count > 2:
+        style_points.append(
+            f'**Exclamation marks ({excl_count}):** Multiple exclamation marks '
+            f'reinforce an aggressive or emotionally charged delivery.'
+        )
+    if ques_count > 2:
+        style_points.append(
+            f'**Question marks ({ques_count}):** Repeated questioning can signal '
+            f'confrontational or challenging language.'
+        )
+    if lexical_div < 0.5:
+        style_points.append(
+            f'**Low lexical diversity ({lexical_div:.2f}):** Repetitive word use '
+            f'can indicate targeted, looping attacks on a specific person or trait.'
+        )
+    if word_count < 10:
+        style_points.append(
+            f'**Short message ({word_count} words):** Very short messages that are '
+            f'still flagged tend to be highly concentrated hostile content.'
+        )
+
+    if style_points:
+        for point in style_points:
+            st.markdown(f'- {point}')
+    else:
+        st.markdown(
+            'No unusual writing style signals were detected. The message is written '
+            'in a relatively normal style without aggressive formatting patterns.'
+        )
+
+    # ── FINAL RECOMMENDATION ───────────────────────────────
+    st.markdown('---')
+    st.markdown('### 🛡️ What Should You Do?')
+
+    if boosted_prob >= 0.75:
+        st.error(
+            '**Immediate action recommended.** This content shows strong signs of '
+            'cyberbullying. You should:\n\n'
+            '- 📸 **Save evidence** — screenshot the message with timestamps\n'
+            '- 🚫 **Block the sender** on the platform\n'
+            '- 🚨 **Report the content** to the platform moderators\n'
+            '- 🗣️ **Tell a trusted adult, friend, or counsellor** if you are the target\n'
+            '- 🏫 **Escalate to school or authorities** if threats are involved'
+        )
+    elif boosted_prob >= THRESHOLD:
+        st.warning(
+            '**Monitor and document.** This content is borderline and warrants caution:\n\n'
+            '- 📝 **Keep records** of this and any similar messages\n'
+            '- 👀 **Watch for patterns** — repeated behaviour from the same person\n'
+            '- 🗣️ **Talk to someone** if the messages are making you uncomfortable\n'
+            '- 🚫 **Consider blocking** the sender if messages continue'
+        )
+    elif boosted_prob >= 0.35:
+        st.info(
+            '**Stay aware.** The content is ambiguous but not clearly harmful:\n\n'
+            '- 👀 **Pay attention to tone changes** in the conversation\n'
+            '- 🤔 **Consider the context** — is this normal for this relationship?\n'
+            '- 📝 **Note if this is part of a pattern** of behaviour'
+        )
+    else:
+        st.success(
+            '**No action needed.** The content appears safe:\n\n'
+            '- ✅ This message does not show signs of cyberbullying\n'
+            '- 👀 Continue to stay aware of how online conversations make you feel\n'
+            '- 🗣️ Always feel free to talk to someone if something feels off'
+        )
 
 # ──────────────────────────────────────────────────────────
 # SESSION STATE INIT
