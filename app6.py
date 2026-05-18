@@ -1101,103 +1101,47 @@ CONTEXT_OPTIONS = [
 ]
 
 # tabs
-tab1, tab2 = st.tabs([
+tab1, tab2, tab3 = st.tabs([
     '💬 Text',
-    '🖼️ Screenshot'
+    '🖼️ Screenshot',
+    '📊 Analysis',     
 ])
 
-# ──────────────────────────────────────────────────────────
-# TEXT TAB
-# ──────────────────────────────────────────────────────────
 with tab1:
+    # just input fields, no show_result() here
+    text_input = st.text_area('Enter text:', height=150)
+    selected_context_text = st.selectbox('📌 Context', options=CONTEXT_OPTIONS)
 
-    text_input = st.text_area(
-        'Enter text:',
-        height=150,
-        key='text_input_widget'
-    )
+    if st.button('Analyze Text', use_container_width=True):
+        st.session_state.result_text = text_input
+        st.session_state.result_context = selected_context_text
 
-    # store context in session_state on every change
-    selected_context_text = st.selectbox(
-        '📌 Context',
-        options=CONTEXT_OPTIONS,
-        key='selectbox_text',
-        on_change=lambda: st.session_state.update(
-            context_text=st.session_state.selectbox_text
-        )
-    )
-
-    # sync on first load
-    st.session_state.context_text = selected_context_text
-
-    if st.button(
-        'Analyze Text',
-       use_container_width=True
-    ):
-        # snapshot context at click time
-        frozen_context = st.session_state.context_text
-
-        show_result(
-            text_input,
-            tokenizer,
-            roberta,
-            model,
-            scaler,
-            frozen_context
-        )
-
-# ──────────────────────────────────────────────────────────
-# SCREENSHOT TAB
-# ──────────────────────────────────────────────────────────
 with tab2:
-
-    uploaded_file = st.file_uploader(
-        'Upload Screenshot',
-        type=['png', 'jpg', 'jpeg', 'webp']
-    )
-
+    # just upload + OCR, no show_result() here
+    uploaded_file = st.file_uploader('Upload Screenshot', type=['png','jpg','jpeg','webp'])
     if uploaded_file:
-
         image = Image.open(uploaded_file)
-
         st.image(image, use_container_width=True)
-
-        with st.spinner('Extracting text...'):
-            ocr_text = extract_text_from_image(image)
-
+        ocr_text = extract_text_from_image(image)
         if ocr_text:
+            st.session_state.result_text = ocr_text
+            selected_context_img = st.selectbox('📌 Context', options=CONTEXT_OPTIONS)
+            if st.button('Analyze Screenshot', use_container_width=True):
+                st.session_state.result_context = selected_context_img
 
-            extracted_box = st.text_area(
-                'Extracted text:',
-                value=ocr_text,
-                height=120
-            )
+with tab3:
+    # 5 analysis tabs appear here
+    if 'result_text' in st.session_state and st.session_state.result_text:
+        show_result(
+            st.session_state.result_text,
+            tokenizer, roberta, model, scaler,
+            st.session_state.get('result_context', 'Unknown / Public comment')
+        )
+    else:
+        st.info('Analyze some text or a screenshot first.')
 
-            selected_context_img = st.selectbox(
-                '📌 Context',
-                options=CONTEXT_OPTIONS,
-                key='selectbox_img',
-                on_change=lambda: st.session_state.update(
-                    context_img=st.session_state.selectbox_img
-                )
-            )
+        if 'result_text' not in st.session_state:
+         st.session_state.result_text = ''
 
-            st.session_state.context_img = selected_context_img
-
-            if st.button(
-                'Analyze Screenshot',
-                use_container_width=True
-            ):
-                frozen_context_img = st.session_state.context_img
-
-                show_result(
-                    extracted_box,
-                    tokenizer,
-                    roberta,
-                    model,
-                    scaler,
-                    frozen_context_img
-                )
-
-        else:
-            st.error('Could not extract text.')
+    if 'result_context' not in st.session_state:
+        st.session_state.result_context = 'Unknown / Public comment'
