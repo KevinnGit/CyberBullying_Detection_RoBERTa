@@ -228,12 +228,14 @@ def predict(text, tokenizer, roberta, model, scaler,
     indirect_boost = 0.15 if is_indirect else 0.0
 
     context_boost = 0.0
-    if context == 'Between strangers':
+    if context == 'Public post (broad audience)':
         context_boost = 0.10
+    elif context == 'Reply/Mention (public thread)':
+        context_boost = 0.08
+    elif context == 'Direct message / Mention (private)':
+        context_boost = 0.20
     elif context == 'Between friends (may contain banter)':
         context_boost = -0.25
-    elif context == 'Directed at me personally':
-        context_boost = 0.20
     elif context == 'Repeated messages from same person':
         context_boost = 0.25
 
@@ -262,6 +264,12 @@ def predict(text, tokenizer, roberta, model, scaler,
 
     boosted_prob = prob + indirect_boost + context_boost + mitigation
     boosted_prob = max(0.0, min(1.0, boosted_prob))
+    
+    # Apply false positive guard
+    fp, fp_reason = is_false_positive(text, boosted_prob)
+    if fp:
+        boosted_prob = min(boosted_prob, THRESHOLD - 0.01)  # push below threshold
+    
     is_cyber     = boosted_prob >= THRESHOLD
 
     print("===================================")
@@ -281,30 +289,131 @@ def predict(text, tokenizer, roberta, model, scaler,
     )
 
 # ──────────────────────────────────────────────────────────
-# WORD-LEVEL DICTIONARIES
+# EXPANDED WORD-LEVEL DICTIONARIES
 # ──────────────────────────────────────────────────────────
+
 THREAT_WORDS = {
     'kill','die','death','dead','murder','shoot','stab',
     'hurt','harm','destroy','attack','beat','punch','cut',
     'bleed','suffer','threaten','exterminate','execute',
+
+    # added violence/harm words
+    'slap','smack','kick','choke','strangle','hang',
+    'burn','bury','poison','torture','massacre',
+    'assault','abuse','bully','harass','terrorize',
+    'explode','bomb','crush','smash','wreck','ruin',
+    'eliminate','erase','annihilate','terminate',
+    'fight','fightyou','jump','kidnap','lynch',
+    'scar','cripple','break','shatter','rip',
+    'tear','stabbed','shot','beheaded','slaughter',
+    'hunt','huntdown','destroyyou','hurtyou',
+    'endyou','makeyousuffer','takeyoudown',
+    'wipeout','wipeyouout','revenge','retaliate',
+    'suicide','selfharm','overdose','diealone',
+    'rot','rotinhell','bleedout','suffocate',
+    'threat','violent','violence','brutal',
+    'dangerous','hostile','aggressive',
 }
 
 HATE_WORDS = {
+    # general insults
     'ugly','stupid','idiot','dumb','moron','loser',
     'worthless','pathetic','disgusting','gross','freak',
     'weirdo','trash','garbage','waste','fat','pig',
     'rat','filth','dirty','hate','despise','detest',
+    'horrible','terrible','awful','nasty','vile',
+    'dreadful','appalling','repulsive','revolting','hideous',
+
+    # appearance attacks
+    'unattractive','unpleasant','repellent','grotesque',
+    'plain','homely','fugly','busted','ratchet',
+    'overweight','obese','skinny','scrawny','bony',
+
+    # character attacks
+    'fake','phony','liar','hypocrite','narcissist',
+    'manipulative','toxic','abusive','cruel','mean',
+    'heartless','soulless','brainless','clueless','useless',
+
+    # intelligence attacks
+    'ignorant','dense','dim','slow','inept','incompetent',
+    'illiterate','uneducated','unintelligent',
+
+    # added insults/slurs/common toxic terms
+    'retard','retarded','clown','bozo','dummy',
+    'failure','embarrassing','cringe','annoying',
+    'attentionseeker','wannabe','fraud','coward',
+    'weak','spineless','trashcan','humantrash',
+    'pieceofshit','pieceoftrash','garbagehuman',
+    'subhuman','inhuman','monster','animal',
+    'vermin','parasite','scum','scumbag',
+    'bastard','jerk','asshole','dickhead',
+    'shithead','motherfucker','mf','bitch',
+    'slut','whore','hoe','skank',
+    'creep','pervert','psycho','lunatic',
+    'crazy','madman','fool','simp',
+    'lame','corny','basic','tryhard',
+    'stank','smelly','broke','cheapskate',
+    'hopeless','pitiful','miserable',
+    'disappointment','mistake','reject',
+    'nobody','nothing','worthlesspiece',
+    'loserlife','uglyass','fatass','dumbass',
+    'idiotic','brainrot','airhead','nitwit',
+    'filthy','disliked','hated','evil',
 }
 
 EXCLUSION_WORDS = {
     'nobody','alone','friendless','unwanted','invisible',
     'ignored','outcast','rejected','unlovable','unloved',
-    'disappear','nothing',
+    'disappear','nothing','irrelevant','insignificant',
+    'forgotten','unimportant','replaceable','expendable',
+
+    # added exclusion/isolation terms
+    'isolated','lonely','abandoned','deserted',
+    'leftout','excluded','unaccepted','unwelcome',
+    'banished','blocked','ghosted','muted',
+    'deleted','removed','kicked','avoided',
+    'uninvited','discarded','detached',
+    'outsider','misfit','unseen','neglected',
+    'unsupported','dismissed','alienated',
+    'cutoff','disowned','ignoredforever',
+    'nobodycares','nobodylikesyou',
+    'goaway','leave','stayaway',
+    'notwanted','notneeded','notwelcome',
+    'stayout','leaveusalone','shutup',
+    'silenttreatment','abandonedyou',
+    'socialreject','castout','forsaken',
+    'unnoticed','leftbehind','pushedaway',
+    'ditched','abandonedagain',
 }
 
 INTENSIFIER_WORDS = {
+    # degree intensifiers
     'always','never','everyone','worst','literally',
     'absolutely','completely','totally','forever',
+    'extremely','incredibly','unbelievably','ridiculously',
+    'insanely','outrageously','exceptionally','remarkably',
+    'utterly','thoroughly','deeply','highly','terribly',
+    'awfully','dreadfully','horribly','shockingly',
+
+    # frequency intensifiers
+    'constantly','repeatedly','endlessly','continuously',
+    'nonstop','relentlessly','persistently',
+
+    # added amplifiers
+    'very','really','super','so','too',
+    'fucking','freaking','damn','hella',
+    'mega','ultra','crazy','mad',
+    'seriously','definitely','clearly',
+    'obviously','truly','surely',
+    'massively','hugely','severely',
+    'purely','entirely','fully',
+    'beyond','overly','waytoo',
+    '100percent','1000percent',
+    'forreal','deadass','fr',
+    'straightup','legit','hardcore',
+    'everyday','everytime','allthetime',
+    'withoutfail','againandagain',
+    'themost','maximum','max',
 }
 
 WORD_CATEGORIES = {
@@ -436,6 +545,108 @@ def _signal_row(icon, label, detail, color='#f39c12'):
     )
 
 # ──────────────────────────────────────────────────────────
+# FALSE POSITIVE GUARD
+# ──────────────────────────────────────────────────────────
+
+# Words that DISCUSS bullying topics but are not bullying
+REPORTING_PHRASES = [
+    r'\bissues?\b.*\bbullying\b',
+    r'\babout\b.*\bbullying\b',
+    r'\bstop\b.*\bbullying\b',
+    r'\banti.?bully',
+    r'\bprevent.*\bbullying\b',
+    r'\bawareness\b',
+    r'\bcurriculums?\b',
+    r'\bpolic(y|ies)\b',
+    r'\bsupport(ing)?\b.*\bteachers?\b',
+    r'\bmoderniz',
+    r'\baddress(ing)?\b.*\bviolence\b',
+    r'\breport(ing)?\b',
+    r'\bstudies\b|\bresearch\b|\bstatistic',
+    r'\branges?\s+from.*\b(bullying|abuse|violence)\b',  # "ranges from X, Y, Z" patterns
+    r'\btypes?\s+of\b.*\b(bullying|abuse|harm|violence)\b',  # "types of bullying"
+    r'\bforms?\s+of\b.*\b(bullying|abuse|harm)\b',  # "forms of abuse"
+    r'#SaferSchools|#Anti[Bb]ully|#EndBullying|#BullyFree',  # safety hashtags
+    r'\b(marginalised|marginalized|minority|groups?)\b.*\b(exclusion|violence)\b',  # social exclusion awareness
+]
+
+# Safe/informational openers
+SAFE_OPENERS = [
+    'the fact that i',        # sarcastic tweet opener
+    'the fact that we',
+    'imagine being',          # hyperbole
+    'not me thinking',        # self-deprecating humour  
+    'tell me why',            # rhetorical
+    'nobody asked but',
+    'hot take',
+    'unpopular opinion',
+    'is a human rights violation',  # sarcastic hyperbole phrase
+    'should be illegal',            # sarcastic hyperbole phrase
+    'unpopular opinion',
+    'hot take',
+    'controversial opinion',
+    'these issues',
+    'according to',
+    'research shows',
+    'studies show',
+    'we need to',
+    'we should',
+    'it is important',
+    'raising awareness',
+    'in support of',
+]
+
+def is_false_positive(text, prob):
+    """
+    Returns (is_fp, reason) — True if the prediction
+    is likely a false positive despite high score.
+    """
+    text_lower = text.lower()
+
+    # Check reporting/discussion phrases (even for very high scores)
+    for pattern in REPORTING_PHRASES:
+        if re.search(pattern, text_lower):
+            return True, 'This text discusses or reports on bullying/violence rather than committing it'
+
+    # Check safe openers
+    for opener in SAFE_OPENERS:
+        if text_lower.strip().startswith(opener):
+            return True, f'Text begins with informational language: "{opener}"'
+
+    # Only apply rest of checks for borderline scores (not extreme ones)
+    if prob > 0.90:
+        return False, ''
+
+    # No profanity + positive/neutral sentiment + no direct target = likely FP
+    from textblob import TextBlob
+    sentiment = TextBlob(text).sentiment.polarity
+    has_profanity = profanity.contains_profanity(text)
+    # Consider pronouns and platform-specific mention formats as possible direct targets
+    pronoun_target = bool(re.search(r'\b(?:you|your|u|he|she|they)\b', text_lower))
+    mention_patterns = [
+        r'@\w[\w\.\-]*',   # Twitter/Instagram-like handles (letters, digits, underscore, dot, hyphen)
+        r'<@!?[A-Za-z0-9_]+>', # Slack/Discord style <@U12345>
+        r'/u/[A-Za-z0-9_\-]+',# Reddit user /u/username
+    ]
+    mention_target = any(re.search(p, text) for p in mention_patterns)
+    has_target = pronoun_target or mention_target
+
+    if not has_profanity and sentiment >= 0 and not has_target and prob < 0.75:
+        return True, 'No profanity, neutral/positive sentiment, and no direct target — likely context-driven false positive'
+
+    # Violence-related wording without direct target = likely FP (only for borderline scores)
+    no_direct_target = not has_target
+    low_toxicity = not has_profanity and sentiment >= -0.1
+    if no_direct_target and low_toxicity and 0.35 < prob < 0.65:
+        explanation = (
+            "Violence-related wording detected, "
+            "but no direct harassment or attack target was identified."
+        )
+        return True, explanation
+
+    return False, ''
+
+# ──────────────────────────────────────────────────────────
 # SHOW RESULT
 # ──────────────────────────────────────────────────────────
 def show_result(text, tokenizer, roberta, model, scaler,
@@ -453,6 +664,15 @@ def show_result(text, tokenizer, roberta, model, scaler,
         ) = predict(text, tokenizer, roberta, model, scaler, context)
 
         html_highlighted, flagged_words, cat_counts = analyse_words(text)
+
+    # Show false positive guard override if triggered
+    fp, fp_reason = is_false_positive(text, boosted_prob)
+    if fp:
+        st.warning(
+            f'⚠️ **False Positive Guard triggered:** {fp_reason}\n\n'
+            f'Score adjusted below threshold — this text appears to *discuss* '
+            f'bullying rather than *commit* it.'
+        )
 
     # ── live features ──────────────────────────────────────
     blob         = TextBlob(text)
@@ -489,9 +709,10 @@ def show_result(text, tokenizer, roberta, model, scaler,
     k1.metric('Final Score', f'{boosted_prob*100:.2f}%')
     k2.metric('Raw RoBERTa', f'{raw_prob*100:.2f}%')
     k3.metric('Threshold',   f'{THRESHOLD*100:.0f}%')
-    k4.metric('Margin',      f'{abs(margin)*100:.2f}%',
-              delta='above' if margin >= 0 else 'below',
-              delta_color='inverse')
+    # Show signed margin so arrow indicates above/below threshold correctly
+    k4.metric('Margin', f'{margin*100:+.2f}%',
+              delta=f'{margin*100:+.2f}%',
+              delta_color='normal')
 
     st.caption(f'📌 Context: **{context}**')
     st.divider()
@@ -1378,10 +1599,11 @@ with st.spinner('Loading models...'):
     tokenizer, roberta, model, scaler = load_models()
 
 CONTEXT_OPTIONS = [
-    'Unknown / Public comment',
-    'Between strangers',
+    'Unknown / Public post',
+    'Public post (broad audience)',
+    'Reply/Mention (public thread)',
+    'Direct message / Mention (private)',
     'Between friends (may contain banter)',
-    'Directed at me personally',
     'Repeated messages from same person',
 ]
 
