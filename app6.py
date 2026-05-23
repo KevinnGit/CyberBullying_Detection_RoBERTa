@@ -1,10 +1,3 @@
-try:
-    import pytesseract
-    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
-    TESSERACT_AVAILABLE = True
-except Exception:
-    TESSERACT_AVAILABLE = False
-
 import streamlit as st
 import torch
 import torch.nn as nn
@@ -225,8 +218,6 @@ def friendly_mitigation(text, tone, context, is_friendly_insult=False):
 # OCR
 # ──────────────────────────────────────────────────────────
 def extract_text_from_image(image):
-    if not TESSERACT_AVAILABLE:
-        return "[Image OCR unavailable - Tesseract not installed. Install from: https://github.com/UB-Mannheim/tesseract/wiki]"
     if image.mode != 'RGB':
         image = image.convert('RGB')
     text = pytesseract.image_to_string(image, lang='eng')
