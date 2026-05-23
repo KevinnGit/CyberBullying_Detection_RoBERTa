@@ -218,12 +218,9 @@ def friendly_mitigation(text, tone, context, is_friendly_insult=False):
 # OCR
 # ──────────────────────────────────────────────────────────
 def extract_text_from_image(image):
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-    text = pytesseract.image_to_string(image, lang='eng')
-    text = re.sub(r'\n+', ' ', text)
-    text = re.sub(r'\s+', ' ', text)
-    return text.strip()
+    # Image OCR feature disabled (requires Tesseract installation)
+    # For now, return a placeholder - image analysis not available
+    return "[Image text extraction not available. Please use text input instead.]"
 
 # ──────────────────────────────────────────────────────────
 # FEATURE ENGINEERING
