@@ -5,6 +5,7 @@ import pickle
 import json
 import re
 import pytesseract
+import os
 
 from transformers import RobertaTokenizer, RobertaModel
 from textblob import TextBlob
@@ -12,8 +13,10 @@ from better_profanity import profanity
 from normalizer import normalize_text
 from PIL import Image
 
-# Tesseract OCR configuration
-pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# Tesseract OCR configuration (cross-platform)
+if os.name == 'nt':  # Windows
+    pytesseract.pytesseract.tesseract_cmd = r'C:\Program Files\Tesseract-OCR\tesseract.exe'
+# For Linux/Mac, the path is typically in PATH already, so no need to set it
 
 # ──────────────────────────────────────────────────────────
 # INIT
