@@ -6,3 +6,5 @@ better-profanity>=0.7.0
 pillow>=9.0.0
 pandas>=1.5.0
 scikit-learn>=1.2.0
+pytesseract>=0.3.10
+tesseract-ocr
