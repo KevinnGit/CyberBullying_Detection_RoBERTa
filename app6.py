@@ -113,6 +113,18 @@ SARCASM_PATTERNS = [
     r'oh wow.*(smart|great|amazing)',
 ]
 
+FRIENDLY_INSULT_PATTERNS = [
+    r'you.*?(so ugly|ugly as|fugly|busted)',
+    r'you.*?(suck|sucks|sucked)',
+    r'you.*?worst',
+    r'you.*?(stupid|idiot|dumb)',
+    r'you.*?(trash|garbage)',
+    r'you.*?(lame|weak|pathetic)',
+    r'you.*?(annoying|irritating)',
+    r'you.*?(ugly|hideous|gross)',
+    r'you are so .+',  # catch-all: "you are so [adj]"
+]
+
 def detect_tone(text):
 
     text_lower = text.lower()
@@ -142,6 +154,17 @@ def detect_tone(text):
 
     return 'neutral', ''
 
+def detect_friendly_insult(text):
+    """
+    Detect if text contains friendly insult patterns.
+    Returns (is_friendly_insult, pattern_matched)
+    """
+    text_lower = text.lower()
+    for pattern in FRIENDLY_INSULT_PATTERNS:
+        if re.search(pattern, text_lower):
+            return True, pattern
+    return False, None
+
 # ──────────────────────────────────────────────────────────
 # INDIRECT INSULTS
 # ──────────────────────────────────────────────────────────
@@ -166,7 +189,7 @@ def has_indirect_insult(text):
 # ──────────────────────────────────────────────────────────
 # FRIENDLY MITIGATION
 # ──────────────────────────────────────────────────────────
-def friendly_mitigation(text, tone, context):
+def friendly_mitigation(text, tone, context, is_friendly_insult=False):
 
     text_lower = text.lower()
 
@@ -187,7 +210,11 @@ def friendly_mitigation(text, tone, context):
     if context == 'Between friends (may contain banter)' and tone != 'neutral':
         mitigation -= 0.10
 
-    mitigation = max(mitigation, -0.30)
+    # Extra mitigation for friendly insults in friend context
+    if is_friendly_insult and context == 'Between friends (may contain banter)':
+        mitigation -= 0.50  # Strong reduction for obvious playful insults
+
+    mitigation = max(mitigation, -0.60)  # Allow deeper mitigation for friend context
     return mitigation
 
 # ──────────────────────────────────────────────────────────
@@ -223,6 +250,7 @@ def predict(text, tokenizer, roberta, model, scaler,
 
     normalized = normalize_text(text)
     tone, tone_reason = detect_tone(text)
+    is_friendly_insult, friendly_insult_pattern = detect_friendly_insult(text)
 
     is_indirect, matched_pattern = has_indirect_insult(normalized)
     indirect_boost = 0.15 if is_indirect else 0.0
@@ -239,7 +267,7 @@ def predict(text, tokenizer, roberta, model, scaler,
     elif context == 'Repeated messages from same person':
         context_boost = 0.25
 
-    mitigation = friendly_mitigation(text, tone, context)
+    mitigation = friendly_mitigation(text, tone, context, is_friendly_insult)
 
     enc = tokenizer(
         normalized,
@@ -279,6 +307,7 @@ def predict(text, tokenizer, roberta, model, scaler,
     print("MITIGATION:", mitigation)
     print("FINAL:", boosted_prob)
     print("TONE:", tone)
+    print("FRIENDLY INSULT DETECTED:", is_friendly_insult)
     print("CONTEXT SELECTED:", context)
     print("===================================")
 
@@ -578,7 +607,7 @@ SAFE_OPENERS = [
     'not me thinking',        # self-deprecating humour  
     'tell me why',            # rhetorical
     'nobody asked but',
-    'hot take',
+    'Hot take:',
     'unpopular opinion',
     'is a human rights violation',  # sarcastic hyperbole phrase
     'should be illegal',            # sarcastic hyperbole phrase
@@ -596,22 +625,80 @@ SAFE_OPENERS = [
     'in support of',
 ]
 
+# Apology and self-improvement patterns
+APOLOGY_PATTERNS = [
+    r'\bi.*(am )?so sorry\b',
+    r'\bso sorry\b',
+    r'\bapolog(y|ize|ising|izing)',
+    r'\bmy bad\b',
+    r'\bi was wrong\b',
+    r'\bi messed up\b',
+    r'\bi let (you|us|everyone) down\b',
+    r'\bwill.*work on.*being better\b',
+    r'\bwill.*be better\b',
+    r'\bwill.*improve\b',
+    r'\bwill forever.*better\b',
+    r'\bi acknowledge\b.*\bmistake\b',
+    r'\bmy apologies\b',
+    r'\bi regret\b',
+    r'\bforgive me\b',
+]
+
+# Personal mortality/poetic expressions (self-directed, not attacks)
+PERSONAL_MORTALITY_PATTERNS = [
+    r'(burn|release|let) me',  # "burn me to ashes", "release me"
+    r'\bgoodbye\b',  # farewell/goodbye
+    r'\bfuneral\b.*\bme\b|\bme\b.*\bfuneral\b',
+    r'\btombstone\b',
+    r'\b(ashes|dust|sea)\b',
+    r'\bwish.*peace\b',
+    r'\brest in peace\b',
+    r'\blet me go\b',
+    r'\border.*funeral\b|\bno.*funeral\b',
+]
+
 def is_false_positive(text, prob):
     """
-    Returns (is_fp, reason) — True if the prediction
-    is likely a false positive despite high score.
+    Returns (is_fp, reason).
+    Checks SAFE_OPENERS first so sarcasm/opinion phrases
+    get the correct reason, not a reporting phrase reason.
     """
-    text_lower = text.lower()
+    text_lower = text.lower().strip()
 
-    # Check reporting/discussion phrases (even for very high scores)
+    # ── 1. SAFE OPENERS (checked FIRST) ───────────────────
+    # These are sarcasm, opinion, humour patterns
+    for opener in SAFE_OPENERS:
+        if text_lower.startswith(opener.lower()):
+            return True, f'Text uses opinion/sarcasm opener: "{opener}" — likely humour or personal view, not bullying'
+
+    # ── 2. APOLOGY PATTERNS ────────────────────────────────
+    for pattern in APOLOGY_PATTERNS:
+        if re.search(pattern, text_lower):
+            return True, 'Text contains an apology or self-improvement statement — not bullying'
+
+    # ── 3. PERSONAL MORTALITY (self-directed, no target) ──
+    has_target  = bool(re.search(r'\b(you|your|u|he|she|they)\b', text_lower))
+    has_mention = bool(re.search(r'@\w+|/u/\w+', text))
+    if not has_target and not has_mention:
+        for pattern in PERSONAL_MORTALITY_PATTERNS:
+            if re.search(pattern, text_lower):
+                return True, 'Personal/poetic expression with no target — not bullying'
+
+    # ── 4. REPORTING PHRASES (checked LAST) ───────────────
+    # Only fires if none of the above matched
     for pattern in REPORTING_PHRASES:
         if re.search(pattern, text_lower):
-            return True, 'This text discusses or reports on bullying/violence rather than committing it'
+            return True, 'Text discusses or reports on bullying/violence rather than committing it'
 
-    # Check safe openers
-    for opener in SAFE_OPENERS:
-        if text_lower.strip().startswith(opener):
-            return True, f'Text begins with informational language: "{opener}"'
+    # ── 5. NO PROFANITY + NEUTRAL + NO TARGET ─────────────
+    if prob < 0.75:
+        from textblob import TextBlob
+        sentiment    = TextBlob(text).sentiment.polarity
+        has_profanity= profanity.contains_profanity(text)
+        if not has_profanity and sentiment >= 0 and not has_target:
+            return True, 'No profanity, neutral/positive sentiment, and no direct target'
+
+    return False, ''
 
     # Only apply rest of checks for borderline scores (not extreme ones)
     if prob > 0.90:
@@ -650,7 +737,7 @@ def is_false_positive(text, prob):
 # SHOW RESULT
 # ──────────────────────────────────────────────────────────
 def show_result(text, tokenizer, roberta, model, scaler,
-                context='Unknown / Public comment'):
+                context='Public comment'):
 
     if not text.strip():
         st.warning('No text detected.')
@@ -669,9 +756,7 @@ def show_result(text, tokenizer, roberta, model, scaler,
     fp, fp_reason = is_false_positive(text, boosted_prob)
     if fp:
         st.warning(
-            f'⚠️ **False Positive Guard triggered:** {fp_reason}\n\n'
-            f'Score adjusted below threshold — this text appears to *discuss* '
-            f'bullying rather than *commit* it.'
+            f'⚠️ **Context Override: Informational content detected:** {fp_reason}\n\n'
         )
 
     # ── live features ──────────────────────────────────────
@@ -1266,6 +1351,11 @@ def show_result(text, tokenizer, roberta, model, scaler,
         # ── MODEL ANALYSIS ─────────────────────────────────
         st.markdown('---')
         st.markdown('### 🤖 What the AI Model Detected')
+        st.markdown(
+            f'**Model Architecture:** RoBERTa (768-dim embeddings) + Feature Classifier  |  '
+            f'**Validation Metrics:** Accuracy: {config["accuracy"]:.1f}%, '
+            f'F1-Score: {config["best_macro_f1"]*100:.1f}%, AUC-ROC: {config["auc"]*100:.1f}%'
+        )
 
         if raw_prob >= 0.75:
             model_explanation = (
@@ -1298,34 +1388,39 @@ def show_result(text, tokenizer, roberta, model, scaler,
         # ── TONE ANALYSIS ──────────────────────────────────
         st.markdown('---')
         st.markdown('### 🎭 Tone Analysis')
+        st.markdown(
+            f'**Detection Method:** Pattern matching on emojis, linguistic markers, and message structure.  |  '
+            f'**Detected Tone:** `{tone.upper()}`'
+        )
 
         if tone == 'friendly':
             st.markdown(
-                f'The tone was detected as **friendly/banter** ({tone_reason}). '
-                f'This is a mitigating factor — the presence of friendly language markers '
-                f'such as casual expressions, banter emojis, or affectionate terms suggests '
-                f'the message may not carry genuine harmful intent. '
-                f'The score was reduced by **{abs(mitigation)*100:.0f}%** as a result.'
+                f'✅ **Tone: Friendly/Banter** — {tone_reason}  \n'
+                f'This is a strong **mitigating factor**. Friendly signals (emojis like 😂🤣, '
+                f'banter phrases like "jk"/"lol", affectionate terms) suggest the message '
+                f'is not intended to cause harm. The model score was reduced by **{abs(mitigation)*100:.0f}%** '
+                f'to reflect this context.'
             )
         elif tone == 'mocking':
             st.markdown(
-                f'The tone was detected as **mocking** ({tone_reason}). '
-                f'Mocking language — even when disguised as humour — is a known vector '
-                f'for cyberbullying. It can belittle, embarrass, or demean the target '
-                f'while giving the sender plausible deniability. No mitigation was applied.'
+                f'⚠️ **Tone: Mocking** — {tone_reason}  \n'
+                f'Mocking is a **hostile tone marker**. Even when disguised as humor, mocking can '
+                f'belittle and embarrass the target. The model detected mocking emojis or patterns '
+                f'(💀😬🙄), which are treated as aggressive signals. **No friendly mitigation was applied**.'
             )
         elif tone == 'sarcastic':
             st.markdown(
-                f'The tone was detected as **sarcastic** ({tone_reason}). '
-                f'Sarcasm is commonly used to mask bullying intent — a genuinely harmful '
-                f'message can be framed as a joke. Because of this, sarcasm does **not** '
-                f'trigger friendly mitigation. The score was not reduced.'
+                f'⚠️ **Tone: Sarcastic** — {tone_reason}  \n'
+                f'Sarcasm is often used to **mask bullying intent**. A genuinely harmful message can be '
+                f'framed as a joke. Because sarcasm is ambiguous and can hide cruelty, the model '
+                f'**does not apply friendly mitigation** for sarcastic messages. The score remains unaffected.'
             )
         else:
             st.markdown(
-                'The tone was detected as **neutral** — no strong friendly or hostile '
-                'tone markers were found. The score is therefore driven primarily by the '
-                'language content itself rather than emotional delivery.'
+                f'⚪ **Tone: Neutral** — {tone_reason}  \n'
+                f'No strong friendly or hostile tone markers were detected. The classification '
+                f'is driven by the **language content itself** (vocabulary, model patterns) rather '
+                f'than emotional/delivery tone.'
             )
 
         # ── LANGUAGE & VOCABULARY ──────────────────────────
@@ -1383,43 +1478,52 @@ def show_result(text, tokenizer, roberta, model, scaler,
         # ── SENTIMENT ──────────────────────────────────────
         st.markdown('---')
         st.markdown('### 😡 Sentiment & Emotional Tone')
+        st.markdown(
+            f'**Sentiment Source:** TextBlob polarity analysis (–1 = very negative, 0 = neutral, +1 = very positive)  |  '
+            f'**Current Value:** `{sentiment:+.3f}`'
+        )
 
         if sentiment < -0.5:
             st.markdown(
-                f'**Sentiment polarity: {sentiment:+.3f}** — This is a **very strongly '
-                f'negative** sentiment score. The text reads as highly hostile, angry, or '
-                f'attacking. Strong negative sentiment combined with other signals is a '
-                f'reliable indicator of harmful intent.'
+                f'🔴 **Very Strongly Negative** (polarity: {sentiment:+.3f})  \n'
+                f'The text reads as **highly hostile, angry, or attacking**. Strong negative sentiment is '
+                f'one of the strongest single predictors in the model. Combined with other signals (hate words, '
+                f'threats, high caps), this is a reliable indicator of harmful intent. The model features '
+                f'include this polarity value directly, carrying significant weight in the {config["accuracy"]:.0f}% '
+                f'accurate classifier.'
             )
         elif sentiment < -0.2:
             st.markdown(
-                f'**Sentiment polarity: {sentiment:+.3f}** — This is a **moderately '
-                f'negative** sentiment. The text leans hostile but stops short of being '
-                f'extremely aggressive on sentiment alone.'
+                f'🟠 **Moderately Negative** (polarity: {sentiment:+.3f})  \n'
+                f'The text **leans hostile** but isn\'t extremely aggressive on sentiment alone. This level of '
+                f'negative sentiment is common in both bullying and critical feedback. The final classification '
+                f'depends heavily on context and vocabulary — pure sentiment is not conclusive at this level.'
             )
         elif sentiment > 0.2:
             st.markdown(
-                f'**Sentiment polarity: {sentiment:+.3f}** — This is a **positive** '
-                f'sentiment score. Positive sentiment generally works against a bullying '
-                f'classification, though it can occasionally mask sarcasm or backhanded '
-                f'comments.'
+                f'🟢 **Positive** (polarity: {sentiment:+.3f})  \n'
+                f'Positive sentiment generally **reduces bullying likelihood**, as genuine attacks tend to '
+                f'have negative emotional tone. However, backhanded compliments and sarcastic praise can mask '
+                f'bullying intent — positive sentiment doesn\'t guarantee safety.'
             )
         else:
             st.markdown(
-                f'**Sentiment polarity: {sentiment:+.3f}** — Sentiment is roughly '
-                f'**neutral**. The classification is driven more by specific vocabulary '
-                f'and model patterns than emotional tone.'
+                f'⚪ **Neutral** (polarity: {sentiment:+.3f})  \n'
+                f'Sentiment is roughly balanced. **Classification is driven by other signals** — specific '
+                f'vocabulary (hate words, threats), tone patterns, and model context understanding matter more '
+                f'than emotional polarity.'
             )
 
+        st.markdown('---')
         st.markdown(
-            f'**Subjectivity: {subjectivity:.3f}** — '
+            f'**Subjectivity: {subjectivity:.3f}** (0 = objective, 1 = highly subjective)  \n'
             + (
-                'The text is **highly subjective and emotional**, which is common in '
-                'personal attacks and targeted harassment.'
+                '🔵 **Highly Subjective & Emotional** — Common in personal attacks and targeted harassment. '
+                'Strong emotional language amplifies bullying harm.'
                 if subjectivity > 0.6
-                else 'The text is **moderately subjective**.'
+                else '🟡 **Moderately Subjective** — Mix of opinion and fact. Can indicate passionate engagement.'
                 if subjectivity > 0.3
-                else 'The text reads as **mostly objective** with little emotional charge.'
+                else '⚪ **Mostly Objective** — Factual tone with little emotional charge. Less typical of direct bullying.'
             )
         )
 
@@ -1599,8 +1703,7 @@ with st.spinner('Loading models...'):
     tokenizer, roberta, model, scaler = load_models()
 
 CONTEXT_OPTIONS = [
-    'Unknown / Public post',
-    'Public post (broad audience)',
+    'Public post',
     'Reply/Mention (public thread)',
     'Direct message / Mention (private)',
     'Between friends (may contain banter)',
