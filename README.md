@@ -1,4 +1,4 @@
-# Text Toxicity Classifier with Tone Detection
+# CyberBullying Using Roberta with feature engineering, text augmentation, and context
 
 A Streamlit-based machine learning application that classifies text for toxicity while detecting the tone/sentiment of messages using RoBERTa embeddings and advanced feature engineering.
 
@@ -7,9 +7,6 @@ A Streamlit-based machine learning application that classifies text for toxicity
 This application uses a fine-tuned RoBERTa model combined with engineered features to detect toxic content in text. It also analyzes the tone of messages (friendly, mocking, sarcastic, banter) to provide nuanced understanding of user intent.
 
 ### Key Capabilities
-
-- **Toxicity Detection**: Classifies text as toxic or non-toxic with 92% accuracy
-- **Tone Analysis**: Detects message tone including:
   - Friendly banter and joking
   - Sarcasm
   - Mocking behavior
@@ -189,16 +186,3 @@ See `requirements.txt` for detailed version information:
 - Visualization dashboards for analytics
 - API deployment option
 
-## License
-
-[Add your license information here]
-
-## Author
-
-[Add author information here]
-
-## Acknowledgments
-
-- RoBERTa model from Facebook/Meta Research
-- Streamlit framework for the web interface
-- Tesseract OCR engine
